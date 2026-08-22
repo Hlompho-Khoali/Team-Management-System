@@ -31,6 +31,69 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+input,
+select,
+textarea {
+  color: #222222;
+  color-scheme: light;
+}
+
+.header-user,
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notification-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: #222222;
+  font-size: 20px;
+  text-decoration: none;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #a33a3a;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+.header-avatar,
+.header-avatar-fallback {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.header-avatar {
+  object-fit: cover;
+}
+
+.header-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #222222;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 * {
   box-sizing: border-box;
   padding: 0;
