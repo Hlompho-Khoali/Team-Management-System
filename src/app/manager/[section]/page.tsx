@@ -5,6 +5,7 @@ const managerSections: ManagerSection[] = [
   "teams",
   "employees",
   "projects",
+  "leaderboard",
   "announcements",
   "join-requests",
   "messages",

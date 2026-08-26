@@ -39,10 +39,10 @@ export default function ResetPasswordPage() {
   return (
     <main style={pageStyle}>
       <div style={cardStyle}>
-        <Link href="/" style={brandStyle}>EdBook</Link>
+        <Link href="/" style={brandStyle}>Work-Integrated Learning</Link>
         <p style={eyebrowStyle}>Account recovery</p>
         <h1 style={headingStyle}>Choose a new password.</h1>
-        <p style={descriptionStyle}>Set a new password for your EdBook account.</p>
+        <p style={descriptionStyle}>Set a new password for your Work-Integrated Learning account.</p>
         <form onSubmit={handleReset}>
           <label style={labelStyle} htmlFor="password">New password</label>
           <input

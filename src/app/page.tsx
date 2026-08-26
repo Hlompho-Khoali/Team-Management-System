@@ -32,7 +32,7 @@ export default function HomePage() {
             letterSpacing: "-1px",
           }}
         >
-          EdBook
+          Work-Integrated Learning
         </Link>
 
         <nav
@@ -143,7 +143,7 @@ export default function HomePage() {
               lineHeight: 1.8,
             }}
           >
-            EdBook brings people, projects and ideas into one shared company
+            Work-Integrated Learning brings people, projects and ideas into one shared company
             workspace — making it easier to learn, collaborate and keep track of
             the work that matters.
           </p>
@@ -212,25 +212,20 @@ export default function HomePage() {
                 textTransform: "uppercase",
               }}
             >
-              steAm
+              For external companies
             </p>
 
             <h2
               style={{
-                fontSize: "38px",
+                fontSize: "42px",
                 lineHeight: 1.15,
+                fontWeight: 800,
                 margin: "18px 0 0",
               }}
             >
-              Science.
+              Hire A
               <br />
-              Technology.
-              <br />
-              Engineering.
-              <br />
-              Art.
-              <br />
-              Mathematics.
+              Student.
             </h2>
           </div>
 
@@ -242,8 +237,17 @@ export default function HomePage() {
               fontSize: "14px",
             }}
           >
-            Learning doesn't have to feel ordinary. steAm brings these fields
-            together through creativity, curiosity and fun.
+            Discover skilled and employable students.
+            <br />
+            Partner with us for direct access to a pipeline of job-ready,
+            vetted young professionals to reduce youth unemployment and build
+            South Africa's digital future.
+            <br />
+            1000+ students hired since inception.
+            <br />
+            <Link href="/contact" style={contactLinkStyle}>
+              Contact Us
+            </Link>
           </p>
         </div>
       </section>
@@ -332,6 +336,29 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section
+        style={{
+          background: "#ffffff",
+          borderTop: "1px solid #e5dfd6",
+          borderBottom: "1px solid #e5dfd6",
+          padding: "48px 40px",
+          textAlign: "center",
+        }}
+      >
+        <p style={eyebrowStyle}>Our Partner</p>
+        <img
+          src="/tut-logo.png"
+          alt="Tshwane University of Technology"
+          style={{
+            display: "block",
+            width: "180px",
+            height: "180px",
+            objectFit: "contain",
+            margin: "18px auto 0",
+          }}
+        />
+      </section>
+
       <footer
         style={{
           background: "#222222",
@@ -350,7 +377,7 @@ export default function HomePage() {
             flexWrap: "wrap",
           }}
         >
-          <strong style={{ fontSize: "20px" }}>EdBook</strong>
+          <strong style={{ fontSize: "20px" }}>Work-Integrated Learning</strong>
 
           <span
             style={{
@@ -365,6 +392,15 @@ export default function HomePage() {
     </main>
   );
 }
+
+const contactLinkStyle = {
+  display: "inline-block",
+  marginTop: "12px",
+  color: "#ffffff",
+  fontWeight: 700,
+  textDecoration: "underline",
+  textUnderlineOffset: "4px",
+};
 
 function FeatureCard({ title, text }: { title: string; text: string }) {
   return (

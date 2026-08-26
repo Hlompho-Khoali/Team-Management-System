@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
@@ -9,6 +9,7 @@ export type ManagerSection =
   | "teams"
   | "employees"
   | "projects"
+  | "leaderboard"
   | "announcements"
   | "join-requests"
   | "messages"
@@ -22,6 +23,13 @@ type Profile = {
   email: string;
   role: string;
   avatar_url?: string | null;
+};
+type LeaderboardEntry = {
+  id: string;
+  full_name: string;
+  avatar_url?: string | null;
+  completed_projects: number;
+  points: number;
 };
 
 type Team = {
@@ -127,6 +135,7 @@ export default function ManagerPage({
   const [teams, setTeams] = useState<Team[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMemberRow[]>([]);
@@ -157,18 +166,22 @@ export default function ManagerPage({
   const [calendarTeam, setCalendarTeam] = useState("");
   const [calendarStart, setCalendarStart] = useState("");
   const [calendarEnd, setCalendarEnd] = useState("");
+  const [isCreateCalendarExpanded, setIsCreateCalendarExpanded] = useState(false);
   const [savingCalendar, setSavingCalendar] = useState(false);
+  const [deletingCalendarEventId, setDeletingCalendarEventId] = useState<string | null>(null);
   const [calendarMessage, setCalendarMessage] = useState("");
   const [notificationMessage, setNotificationMessage] = useState("");
 
   const [teamName, setTeamName] = useState("");
   const [teamLeader, setTeamLeader] = useState("");
+  const [isCreateTeamExpanded, setIsCreateTeamExpanded] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState("");
   const [selectedEmployee, setSelectedEmployee] = useState("");
 
   const [projectId, setProjectId] = useState("");
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
+  const [isCreateProjectExpanded, setIsCreateProjectExpanded] = useState(false);
   const [assignmentType, setAssignmentType] = useState("team");
   const [projectTeam, setProjectTeam] = useState("");
   const [projectEmployee, setProjectEmployee] = useState("");
@@ -196,6 +209,11 @@ export default function ManagerPage({
 
   const [announcementTitle, setAnnouncementTitle] = useState("");
   const [announcementContent, setAnnouncementContent] = useState("");
+  const [isCreateAnnouncementExpanded, setIsCreateAnnouncementExpanded] = useState(false);
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
+  const [editingAnnouncementTitle, setEditingAnnouncementTitle] = useState("");
+  const [editingAnnouncementContent, setEditingAnnouncementContent] = useState("");
+  const [savingAnnouncementEdit, setSavingAnnouncementEdit] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [creatingTeam, setCreatingTeam] = useState(false);
@@ -220,10 +238,67 @@ export default function ManagerPage({
   const [announcementMessage, setAnnouncementMessage] = useState("");
   const [requestMessage, setRequestMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeEmployeeProfile, setActiveEmployeeProfile] = useState<Profile | null>(null);
+  const [showEmployeeProfileModal, setShowEmployeeProfileModal] = useState(false);
+  const closeProfileTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadManagerDashboard();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (closeProfileTimeoutRef.current) {
+        clearTimeout(closeProfileTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeEmployeeProfile) {
+      setShowEmployeeProfileModal(false);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      setShowEmployeeProfileModal(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeEmployeeProfile]);
+
+  useEffect(() => {
+    if (!activeEmployeeProfile) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeEmployeeProfile();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activeEmployeeProfile]);
+
+  useEffect(() => {
+    if (!inspectedProject) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setInspectedProject(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [inspectedProject]);
 
   async function loadManagerDashboard() {
     setLoading(true);
@@ -257,6 +332,20 @@ export default function ManagerPage({
     setManager(profileData);
     setSettingsFullName(profileData.full_name || "");
     setSettingsEmail(profileData.email || user.email || "");
+
+    const { data: leaderboardData, error: leaderboardError } = await supabase.rpc(
+      "get_employee_leaderboard",
+    );
+    if (leaderboardError) {
+      console.error("Error loading leaderboard:", {
+        message: leaderboardError.message,
+        code: leaderboardError.code,
+        details: leaderboardError.details,
+        hint: leaderboardError.hint,
+      });
+    } else {
+      setLeaderboard((leaderboardData ?? []) as LeaderboardEntry[]);
+    }
 
     const { data: teamData, error: teamError } = await supabase
       .from("teams")
@@ -346,9 +435,15 @@ export default function ManagerPage({
         .eq("user_id", user.id);
 
     if (conversationMemberError) {
-      console.error(
-        "Error loading manager conversations:",
-        conversationMemberError,
+      console.error("Error loading manager conversations:", {
+        message: conversationMemberError.message,
+        code: conversationMemberError.code,
+        details: conversationMemberError.details,
+        hint: conversationMemberError.hint,
+      });
+      setRequestMessage(
+        conversationMemberError.message ||
+          "Unable to load conversations. Check messaging RLS policies in Supabase.",
       );
     } else {
       const conversationIds = (conversationMemberData ?? [])
@@ -364,7 +459,16 @@ export default function ManagerPage({
             .order("created_at", { ascending: false });
 
         if (conversationError) {
-          console.error("Error loading conversations:", conversationError);
+          console.error("Error loading conversations:", {
+            message: conversationError.message,
+            code: conversationError.code,
+            details: conversationError.details,
+            hint: conversationError.hint,
+          });
+          setRequestMessage(
+            conversationError.message ||
+              "Unable to load conversations. Check messaging RLS policies in Supabase.",
+          );
         } else {
           setConversations((conversationData ?? []) as Conversation[]);
           setSelectedConversation((current) => current || conversationIds[0]);
@@ -377,7 +481,16 @@ export default function ManagerPage({
           .order("created_at", { ascending: true });
 
         if (messagesError) {
-          console.error("Error loading messages:", messagesError);
+          console.error("Error loading messages:", {
+            message: messagesError.message,
+            code: messagesError.code,
+            details: messagesError.details,
+            hint: messagesError.hint,
+          });
+          setRequestMessage(
+            messagesError.message ||
+              "Unable to load messages. Check messaging RLS policies in Supabase.",
+          );
         } else {
           const loadedMessages = (messageData ?? []) as Message[];
           setMessages(loadedMessages);
@@ -511,6 +624,7 @@ export default function ManagerPage({
     setTeamName("");
     setTeamLeader("");
     setTeamMessage(`Team "${data.name}" was created successfully.`);
+    setIsCreateTeamExpanded(false);
 
     setCreatingTeam(false);
   }
@@ -610,10 +724,12 @@ export default function ManagerPage({
     setProjectStatus("incomplete");
     setProjectDeadline("");
     setEditingProject(null);
+    setIsCreateProjectExpanded(false);
   }
 
   function startEditingProject(project: Project) {
     setEditingProject(project);
+    setIsCreateProjectExpanded(true);
 
     setProjectId(project.project_id);
     setProjectName(project.name);
@@ -993,6 +1109,7 @@ export default function ManagerPage({
 
     setAnnouncementTitle("");
     setAnnouncementContent("");
+    setIsCreateAnnouncementExpanded(false);
 
     setAnnouncementMessage("Announcement posted successfully.");
 
@@ -1146,6 +1263,66 @@ export default function ManagerPage({
     );
 
     setProcessingRequestId(null);
+  }
+
+  function startEditingAnnouncement(announcement: Announcement) {
+    setEditingAnnouncementId(announcement.id);
+    setEditingAnnouncementTitle(announcement.title);
+    setEditingAnnouncementContent(announcement.content);
+    setAnnouncementMessage("");
+  }
+
+  function cancelEditingAnnouncement() {
+    setEditingAnnouncementId(null);
+    setEditingAnnouncementTitle("");
+    setEditingAnnouncementContent("");
+  }
+
+  async function handleUpdateAnnouncement(
+    event: FormEvent<HTMLFormElement>,
+    announcement: Announcement,
+  ) {
+    event.preventDefault();
+
+    if (!editingAnnouncementTitle.trim()) {
+      setAnnouncementMessage("Please enter an announcement title.");
+      return;
+    }
+
+    if (!editingAnnouncementContent.trim()) {
+      setAnnouncementMessage("Please enter the announcement content.");
+      return;
+    }
+
+    setSavingAnnouncementEdit(true);
+    setAnnouncementMessage("");
+
+    const { data, error } = await supabase
+      .from("announcements")
+      .update({
+        title: editingAnnouncementTitle.trim(),
+        content: editingAnnouncementContent.trim(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", announcement.id)
+      .select("id, title, content, created_by, created_at, updated_at")
+      .single();
+
+    if (error || !data) {
+      console.error("Error updating announcement:", error);
+      setAnnouncementMessage(error?.message || "Unable to update announcement.");
+      setSavingAnnouncementEdit(false);
+      return;
+    }
+
+    setAnnouncements((current) =>
+      current.map((item) =>
+        item.id === announcement.id ? (data as Announcement) : item,
+      ),
+    );
+    cancelEditingAnnouncement();
+    setAnnouncementMessage("Announcement updated successfully.");
+    setSavingAnnouncementEdit(false);
   }
 
   async function handleDeleteAnnouncement(announcement: Announcement) {
@@ -1484,8 +1661,35 @@ export default function ManagerPage({
     setCalendarTeam("");
     setCalendarStart("");
     setCalendarEnd("");
+    setIsCreateCalendarExpanded(false);
     setCalendarMessage("Calendar event created successfully.");
     setSavingCalendar(false);
+  }
+
+  async function handleDeleteCalendarEvent(eventId: string) {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this calendar event?",
+    );
+    if (!confirmed) return;
+
+    setDeletingCalendarEventId(eventId);
+    setCalendarMessage("");
+
+    const { error } = await supabase
+      .from("calendar_events")
+      .delete()
+      .eq("id", eventId);
+
+    if (error) {
+      console.error("Error deleting calendar event:", error);
+      setCalendarMessage(error.message);
+      setDeletingCalendarEventId(null);
+      return;
+    }
+
+    setCalendarEvents((current) => current.filter((item) => item.id !== eventId));
+    setCalendarMessage("Calendar event deleted.");
+    setDeletingCalendarEventId(null);
   }
 
   async function markManagerNotificationRead(notification: Notification) {
@@ -1700,10 +1904,38 @@ export default function ManagerPage({
     return employee?.full_name || employee?.email || "Unknown employee";
   }
 
+  function getEmployeeInitials(employee: Profile) {
+    return (employee.full_name || employee.email || "E")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join("");
+  }
+
   function getTeamMembers(teamId: string) {
     return teamMembers
       .filter((member) => member.team_id === teamId)
       .map((member) => getEmployeeName(member.user_id));
+  }
+
+  function openEmployeeProfile(employee: Profile) {
+    if (closeProfileTimeoutRef.current) {
+      clearTimeout(closeProfileTimeoutRef.current);
+      closeProfileTimeoutRef.current = null;
+    }
+    setActiveEmployeeProfile(employee);
+  }
+
+  function closeEmployeeProfile() {
+    setShowEmployeeProfileModal(false);
+    if (closeProfileTimeoutRef.current) {
+      clearTimeout(closeProfileTimeoutRef.current);
+    }
+    closeProfileTimeoutRef.current = setTimeout(() => {
+      setActiveEmployeeProfile(null);
+      closeProfileTimeoutRef.current = null;
+    }, 180);
   }
 
   function formatDate(date: string) {
@@ -1770,6 +2002,12 @@ export default function ManagerPage({
   const filteredMessages = messages.filter((message) =>
     matchesSearch(message.content, senderNames[message.sender_id]),
   );
+  const activeEmployeeTeamNames = activeEmployeeProfile
+    ? teamMembers
+        .filter((member) => member.user_id === activeEmployeeProfile.id)
+        .map((member) => getTeamName(member.team_id))
+        .filter((teamName, index, list) => teamName !== "—" && list.indexOf(teamName) === index)
+    : [];
 
   return (
     <main
@@ -1791,7 +2029,7 @@ export default function ManagerPage({
           boxSizing: "border-box",
         }}
       >
-        <h1 style={{ margin: 0 }}>EdBook</h1>
+        <h1 style={{ margin: 0 }}>Work-Integrated Learning</h1>
 
         <div className="topbar-user">
           {manager.avatar_url ? (
@@ -1855,6 +2093,9 @@ export default function ManagerPage({
             <Link href="/manager/projects" style={navStyle}>
               Projects
             </Link>
+            <Link href="/manager/leaderboard" style={navStyle}>
+              Leaderboard
+            </Link>
 
             <Link href="/manager/announcements" style={navStyle}>
               Announcements
@@ -1890,15 +2131,21 @@ export default function ManagerPage({
             maxWidth: "1400px",
           }}
         >
-          <div style={searchBarStyle}>
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search employees, teams, projects, announcements, or messages..."
-              aria-label="Search workspace"
-              style={searchInputStyle}
-            />
-          </div>
+          {activeSection !== "leaderboard" && activeSection !== "overview" && (
+            <div style={searchBarStyle}>
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder={
+                  activeSection === "teams"
+                    ? "Search team names..."
+                    : "Search Bar"
+                }
+                aria-label="Search workspace"
+                style={searchInputStyle}
+              />
+            </div>
+          )}
           <div style={managerSectionVisibility(activeSection, "overview")}>
             <p
               style={{
@@ -1966,9 +2213,11 @@ export default function ManagerPage({
           <section id="teams" style={managerSectionVisibility(activeSection, "teams")}>
             <h3 style={{ marginTop: 0 }}>Team Management</h3>
 
-            <p style={subtitleStyle}>Create teams and organize employees.</p>
+            <p style={subtitleStyle}> </p>
 
             <h4>Existing Teams</h4>
+
+            <p style={subtitleStyle}> </p>
 
             {teams.length === 0 ? (
               <EmptyMessage>No teams have been created yet.</EmptyMessage>
@@ -2006,45 +2255,68 @@ export default function ManagerPage({
                 marginTop: "28px",
               }}
             >
-              <h4>Create a Team</h4>
+              <div style={createTeamHeaderStyle}>
+                <h4 style={{ margin: 0 }}>Create a Team</h4>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsCreateTeamExpanded((current) => !current)
+                  }
+                  style={secondaryButtonStyle}
+                  aria-expanded={isCreateTeamExpanded}
+                  aria-controls="create-team-form"
+                >
+                  {isCreateTeamExpanded ? "Hide form" : "Expand form"}
+                </button>
+              </div>
 
-              <form
-                onSubmit={handleCreateTeam}
+              <div
+                id="create-team-form"
                 style={{
-                  display: "flex",
-                  gap: "12px",
-                  flexWrap: "wrap",
+                  ...createTeamBodyStyle,
+                  maxHeight: isCreateTeamExpanded ? "420px" : "0px",
+                  opacity: isCreateTeamExpanded ? 1 : 0,
+                  marginTop: isCreateTeamExpanded ? "16px" : "0px",
                 }}
               >
-                <input
-                  type="text"
-                  value={teamName}
-                  onChange={(event) => setTeamName(event.target.value)}
-                  placeholder="Team name"
-                  style={inputStyle}
-                />
-
-                <select
-                  value={teamLeader}
-                  onChange={(event) => setTeamLeader(event.target.value)}
-                  style={inputStyle}
+                <form
+                  onSubmit={handleCreateTeam}
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    flexWrap: "wrap",
+                  }}
                 >
-                  <option value="">Select team leader</option>
-                  {employees.map((employee) => (
-                    <option key={employee.id} value={employee.id}>
-                      {employee.full_name || employee.email}
-                    </option>
-                  ))}
-                </select>
+                  <input
+                    type="text"
+                    value={teamName}
+                    onChange={(event) => setTeamName(event.target.value)}
+                    placeholder="Team name"
+                    style={inputStyle}
+                  />
 
-                <button
-                  type="submit"
-                  disabled={creatingTeam}
-                  style={buttonStyle}
-                >
-                  {creatingTeam ? "Creating..." : "Create Team"}
-                </button>
-              </form>
+                  <select
+                    value={teamLeader}
+                    onChange={(event) => setTeamLeader(event.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">Select team leader</option>
+                    {employees.map((employee) => (
+                      <option key={employee.id} value={employee.id}>
+                        {employee.full_name || employee.email}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="submit"
+                    disabled={creatingTeam}
+                    style={buttonStyle}
+                  >
+                    {creatingTeam ? "Creating..." : "Create Team"}
+                  </button>
+                </form>
+              </div>
 
               {teamMessage && <p style={messageStyle}>{teamMessage}</p>}
             </div>
@@ -2108,34 +2380,56 @@ export default function ManagerPage({
             <div style={{ marginTop: "30px" }}>
               <h4>Employees</h4>
 
+              <p style={subtitleStyle}> </p>
+
               {employees.length === 0 ? (
                 <EmptyMessage>No employee accounts were found.</EmptyMessage>
               ) : (
                 <div style={listStyle}>
                   {filteredEmployees.map((employee) => (
                     <div key={employee.id} style={employeeCardStyle}>
-                      {employee.avatar_url ? (
-                        <img
-                          src={employee.avatar_url}
-                          alt={employee.full_name || "Employee profile"}
-                          style={employeeAvatarStyle}
-                        />
-                      ) : (
-                        <span style={employeeAvatarFallbackStyle}>
-                          {(employee.full_name || employee.email)
-                            .trim()
-                            .split(/\s+/)
-                            .slice(0, 2)
-                            .map((part) => part.charAt(0).toUpperCase())
-                            .join("")}
-                        </span>
-                      )}
-                      <div>
-                        <strong>
-                          {employee.full_name || "Unnamed employee"}
-                        </strong>
-                        <p style={employeeEmailStyle}>{employee.email}</p>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "14px",
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => openEmployeeProfile(employee)}
+                          style={employeeAvatarButtonStyle}
+                          aria-label={`View ${employee.full_name || employee.email} profile`}
+                        >
+                          {employee.avatar_url ? (
+                            <img
+                              src={employee.avatar_url}
+                              alt={employee.full_name || "Employee profile"}
+                              style={employeeAvatarStyle}
+                            />
+                          ) : (
+                            <span style={employeeAvatarFallbackStyle}>
+                              {getEmployeeInitials(employee)}
+                            </span>
+                          )}
+                        </button>
+                        <div style={employeeInfoStyle}>
+                          <strong>
+                            {employee.full_name || "Unnamed employee"}
+                          </strong>
+                          <p style={employeeEmailStyle}>{employee.email}</p>
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => openEmployeeProfile(employee)}
+                        style={evaluateButtonStyle}
+                        aria-label={`Evaluate ${employee.full_name || employee.email}`}
+                      >
+                        Evaluate
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -2148,7 +2442,7 @@ export default function ManagerPage({
             <h3 style={{ marginTop: 0 }}>Project Management</h3>
 
             <p style={subtitleStyle}>
-              Create, assign, update and remove company projects.
+              
             </p>
 
             <div
@@ -2159,164 +2453,189 @@ export default function ManagerPage({
                 marginBottom: "30px",
               }}
             >
-              <h4>{editingProject ? "Edit Project" : "Create a Project"}</h4>
+              <div style={createTeamHeaderStyle}>
+                <h4 style={{ margin: 0 }}>
+                  {editingProject ? "Edit Project" : "Create a Project"}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsCreateProjectExpanded((current) => !current)
+                  }
+                  style={secondaryButtonStyle}
+                  aria-expanded={isCreateProjectExpanded}
+                  aria-controls="create-project-form"
+                >
+                  {isCreateProjectExpanded ? "Hide form" : "Expand form"}
+                </button>
+              </div>
 
-              <form
-                onSubmit={handleSaveProject}
+              <div
+                id="create-project-form"
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "14px",
+                  ...createTeamBodyStyle,
+                  maxHeight: isCreateProjectExpanded ? "1200px" : "0px",
+                  opacity: isCreateProjectExpanded ? 1 : 0,
+                  marginTop: isCreateProjectExpanded ? "16px" : "0px",
                 }}
               >
-                <input
-                  type="text"
-                  value={projectId}
-                  onChange={(event) => setProjectId(event.target.value)}
-                  placeholder="Project ID"
-                  style={inputStyle}
-                />
-
-                <input
-                  type="text"
-                  value={projectName}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  placeholder="Project name"
-                  style={inputStyle}
-                />
-
-                <textarea
-                  value={projectDescription}
-                  onChange={(event) =>
-                    setProjectDescription(event.target.value)
-                  }
-                  placeholder="Project description"
-                  rows={4}
-                  style={{
-                    ...inputStyle,
-                    resize: "vertical",
-                    fontFamily: "inherit",
-                  }}
-                />
-
-                <select
-                  value={assignmentType}
-                  onChange={(event) => {
-                    setAssignmentType(event.target.value);
-                    setProjectTeam("");
-                    setProjectEmployee("");
-                  }}
-                  style={inputStyle}
-                >
-                  <option value="team">Assign to a team</option>
-
-                  <option value="employee">Assign to an employee</option>
-                </select>
-
-                {assignmentType === "team" && (
-                  <select
-                    value={projectTeam}
-                    onChange={(event) => setProjectTeam(event.target.value)}
-                    style={inputStyle}
-                  >
-                    <option value="">Select a team</option>
-
-                    {teams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                {assignmentType === "employee" && (
-                  <select
-                    value={projectEmployee}
-                    onChange={(event) => setProjectEmployee(event.target.value)}
-                    style={inputStyle}
-                  >
-                    <option value="">Select an employee</option>
-
-                    {employees.map((employee) => (
-                      <option key={employee.id} value={employee.id}>
-                        {employee.full_name || employee.email}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                <select
-                  value={projectStatus}
-                  onChange={(event) => setProjectStatus(event.target.value)}
-                  style={inputStyle}
-                >
-                  <option value="incomplete">Incomplete</option>
-
-                  <option value="complete">Complete</option>
-                </select>
-
-                <label
-                  style={{
-                    fontSize: "14px",
-                    color: "#4f4a44",
-                  }}
-                >
-                  Deadline
-                </label>
-
-                <input
-                  type="datetime-local"
-                  value={projectDeadline}
-                  onChange={(event) => setProjectDeadline(event.target.value)}
-                  style={inputStyle}
-                />
-
-                <input
-                  type="url"
-                  value={projectLink}
-                  onChange={(event) => setProjectLink(event.target.value)}
-                  placeholder="Project link (optional)"
-                  style={inputStyle}
-                />
-
-                <input
-                  type="url"
-                  value={projectZipUrl}
-                  onChange={(event) => setProjectZipUrl(event.target.value)}
-                  placeholder="ZIP file URL (optional)"
-                  style={inputStyle}
-                />
-
-                <div
+                <form
+                  onSubmit={handleSaveProject}
                   style={{
                     display: "flex",
-                    gap: "10px",
-                    flexWrap: "wrap",
+                    flexDirection: "column",
+                    gap: "14px",
                   }}
                 >
-                  <button
-                    type="submit"
-                    disabled={savingProject}
-                    style={buttonStyle}
-                  >
-                    {savingProject
-                      ? "Saving..."
-                      : editingProject
-                        ? "Update Project"
-                        : "Create Project"}
-                  </button>
+                  <input
+                    type="text"
+                    value={projectId}
+                    onChange={(event) => setProjectId(event.target.value)}
+                    placeholder="Project ID"
+                    style={inputStyle}
+                  />
 
-                  {editingProject && (
-                    <button
-                      type="button"
-                      onClick={resetProjectForm}
-                      style={secondaryButtonStyle}
+                  <input
+                    type="text"
+                    value={projectName}
+                    onChange={(event) => setProjectName(event.target.value)}
+                    placeholder="Project name"
+                    style={inputStyle}
+                  />
+
+                  <textarea
+                    value={projectDescription}
+                    onChange={(event) =>
+                      setProjectDescription(event.target.value)
+                    }
+                    placeholder="Project description"
+                    rows={4}
+                    style={{
+                      ...inputStyle,
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                    }}
+                  />
+
+                  <select
+                    value={assignmentType}
+                    onChange={(event) => {
+                      setAssignmentType(event.target.value);
+                      setProjectTeam("");
+                      setProjectEmployee("");
+                    }}
+                    style={inputStyle}
+                  >
+                    <option value="team">Assign to a team</option>
+
+                    <option value="employee">Assign to an employee</option>
+                  </select>
+
+                  {assignmentType === "team" && (
+                    <select
+                      value={projectTeam}
+                      onChange={(event) => setProjectTeam(event.target.value)}
+                      style={inputStyle}
                     >
-                      Cancel Edit
-                    </button>
+                      <option value="">Select a team</option>
+
+                      {teams.map((team) => (
+                        <option key={team.id} value={team.id}>
+                          {team.name}
+                        </option>
+                      ))}
+                    </select>
                   )}
-                </div>
-              </form>
+
+                  {assignmentType === "employee" && (
+                    <select
+                      value={projectEmployee}
+                      onChange={(event) => setProjectEmployee(event.target.value)}
+                      style={inputStyle}
+                    >
+                      <option value="">Select an employee</option>
+
+                      {employees.map((employee) => (
+                        <option key={employee.id} value={employee.id}>
+                          {employee.full_name || employee.email}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <select
+                    value={projectStatus}
+                    onChange={(event) => setProjectStatus(event.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="incomplete">Incomplete</option>
+
+                    <option value="complete">Complete</option>
+                  </select>
+
+                  <label
+                    style={{
+                      fontSize: "14px",
+                      color: "#4f4a44",
+                    }}
+                  >
+                    Deadline
+                  </label>
+
+                  <input
+                    type="datetime-local"
+                    value={projectDeadline}
+                    onChange={(event) => setProjectDeadline(event.target.value)}
+                    style={inputStyle}
+                  />
+
+                  <input
+                    type="url"
+                    value={projectLink}
+                    onChange={(event) => setProjectLink(event.target.value)}
+                    placeholder="Project link (optional)"
+                    style={inputStyle}
+                  />
+
+                  <input
+                    type="url"
+                    value={projectZipUrl}
+                    onChange={(event) => setProjectZipUrl(event.target.value)}
+                    placeholder="ZIP file URL (optional)"
+                    style={inputStyle}
+                  />
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "10px",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      type="submit"
+                      disabled={savingProject}
+                      style={buttonStyle}
+                    >
+                      {savingProject
+                        ? "Saving..."
+                        : editingProject
+                          ? "Update Project"
+                          : "Create Project"}
+                    </button>
+
+                    {editingProject && (
+                      <button
+                        type="button"
+                        onClick={resetProjectForm}
+                        style={secondaryButtonStyle}
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </div>
 
               {projectMessage && <p style={messageStyle}>{projectMessage}</p>}
             </div>
@@ -2498,7 +2817,7 @@ export default function ManagerPage({
                         type="button"
                         onClick={() => handleDeleteProject(project)}
                         disabled={deletingProjectId === project.id}
-                        style={deleteButtonStyle}
+                        style={announcementDeleteButtonStyle}
                       >
                         {deletingProjectId === project.id
                           ? "Deleting..."
@@ -2510,205 +2829,6 @@ export default function ManagerPage({
               </div>
             )}
 
-            {inspectedProject && (
-              <article style={{ ...projectCardStyle, marginTop: "24px" }}>
-                <div style={cardHeaderStyle}>
-                  <div>
-                    <p style={eyebrowStyle}>{inspectedProject.project_id}</p>
-                    <h4 style={{ margin: "6px 0" }}>
-                      Inspecting {inspectedProject.name}
-                    </h4>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setInspectedProject(null)}
-                    style={secondaryButtonStyle}
-                  >
-                    Close Inspection
-                  </button>
-                </div>
-
-                {inspectedProject.description && (
-                  <p style={bodyTextStyle}>{inspectedProject.description}</p>
-                )}
-                <div style={projectInspectionGridStyle}>
-                  <ProjectDetail
-                    label="Status"
-                    value={inspectedProject.status.replaceAll("_", " ")}
-                  />
-                  <ProjectDetail
-                    label="Assignment"
-                    value={
-                      inspectedProject.assignment_type === "team"
-                        ? getTeamName(inspectedProject.team_id)
-                        : getEmployeeName(inspectedProject.assigned_to)
-                    }
-                  />
-                  <ProjectDetail
-                    label="Deadline"
-                    value={formatDeadline(inspectedProject.deadline)}
-                  />
-                </div>
-                <div style={statusActionsStyle}>
-                  <button
-                    type="button"
-                    onClick={() => handleProjectStatusChange("complete")}
-                    style={
-                      inspectedProject.status === "complete"
-                        ? buttonStyle
-                        : secondaryButtonStyle
-                    }
-                  >
-                    Mark Complete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleProjectStatusChange("incomplete")}
-                    style={
-                      inspectedProject.status === "incomplete"
-                        ? buttonStyle
-                        : secondaryButtonStyle
-                    }
-                  >
-                    Mark Incomplete
-                  </button>
-                </div>
-                <div style={actionsStyle}>
-                  {inspectedProject.project_link && (
-                    <a
-                      href={inspectedProject.project_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={projectLinkStyle}
-                    >
-                      Open Project Link
-                    </a>
-                  )}
-                  {inspectedProject.project_zip_url && (
-                    <a
-                      href={inspectedProject.project_zip_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={projectLinkStyle}
-                    >
-                      Download Project ZIP
-                    </a>
-                  )}
-                </div>
-
-                <h4 style={{ marginTop: "28px" }}>Project checklist</h4>
-                {projectTasks.length === 0 ? (
-                  <EmptyMessage>No tasks have been added yet.</EmptyMessage>
-                ) : (
-                  <div style={taskListStyle}>
-                    {projectTasks.map((task) => (
-                      <label key={task.id} style={taskRowStyle}>
-                        <input
-                          type="checkbox"
-                          checked={task.is_complete}
-                          onChange={() => handleTaskCompletion(task)}
-                        />
-                        <span
-                          style={
-                            task.is_complete
-                              ? taskCompletedStyle
-                              : undefined
-                          }
-                        >
-                          {task.title}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-                <form onSubmit={handleAddProjectTask} style={taskFormStyle}>
-                  <input
-                    value={newTaskTitle}
-                    onChange={(event) => setNewTaskTitle(event.target.value)}
-                    placeholder="Add a project task..."
-                    style={inputStyle}
-                    required
-                  />
-                  <button
-                    type="submit"
-                    disabled={savingTask || !newTaskTitle.trim()}
-                    style={buttonStyle}
-                  >
-                    {savingTask ? "Adding..." : "Add Task"}
-                  </button>
-                </form>
-                {taskMessage && <p style={messageStyle}>{taskMessage}</p>}
-
-                <h4 style={{ marginTop: "28px" }}>Employee submissions</h4>
-                {projectSubmissions.length === 0 ? (
-                  <EmptyMessage>No employee submissions yet.</EmptyMessage>
-                ) : (
-                  <div style={listStyle}>
-                    {projectSubmissions.map((submission) => (
-                      <div key={submission.id} style={submissionRowStyle}>
-                        <strong>{getEmployeeName(submission.employee_id)}</strong>
-                        {submission.file_url && (
-                          <a href={submission.file_url} target="_blank" rel="noreferrer" style={projectLinkStyle}>
-                            Download {submission.file_name || "file"}
-                          </a>
-                        )}
-                        {submission.submission_link && (
-                          <a href={submission.submission_link} target="_blank" rel="noreferrer" style={projectLinkStyle}>
-                            Open submitted link
-                          </a>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <h4 style={{ marginTop: "28px" }}>Comments</h4>
-                {loadingProjectComments ? (
-                  <p style={subtitleStyle}>Loading comments...</p>
-                ) : projectComments.length === 0 ? (
-                  <EmptyMessage>No comments have been added yet.</EmptyMessage>
-                ) : (
-                  <div style={listStyle}>
-                    {projectComments.map((projectComment) => (
-                      <div key={projectComment.id} style={commentStyle}>
-                        <strong>
-                          {projectComment.profiles?.full_name ||
-                            projectComment.profiles?.email ||
-                            "Manager"}
-                        </strong>
-                        <p style={bodyTextStyle}>{projectComment.content}</p>
-                        <p style={commentMetaStyle}>
-                          {formatDate(projectComment.created_at)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <form
-                  onSubmit={handleAddProjectComment}
-                  style={projectCommentFormStyle}
-                >
-                  <textarea
-                    value={projectCommentText}
-                    onChange={(event) => setProjectCommentText(event.target.value)}
-                    placeholder="Add an inspection comment..."
-                    rows={4}
-                    style={textareaStyle}
-                    required
-                  />
-                  <button
-                    type="submit"
-                    disabled={savingProjectComment || !projectCommentText.trim()}
-                    style={buttonStyle}
-                  >
-                    {savingProjectComment ? "Adding..." : "Add Comment"}
-                  </button>
-                </form>
-                {projectCommentMessage && (
-                  <p style={messageStyle}>{projectCommentMessage}</p>
-                )}
-              </article>
-            )}
           </section>
 
           {/* JOIN REQUESTS */}
@@ -3040,72 +3160,95 @@ export default function ManagerPage({
                 marginBottom: "24px",
               }}
             >
-              <h4 style={{ marginTop: 0 }}>Create Calendar Event</h4>
-              <form
-                onSubmit={handleCreateCalendarEvent}
+              <div style={createTeamHeaderStyle}>
+                <h4 style={{ margin: 0 }}>Create Calendar Event</h4>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsCreateCalendarExpanded((current) => !current)
+                  }
+                  style={secondaryButtonStyle}
+                  aria-expanded={isCreateCalendarExpanded}
+                  aria-controls="create-calendar-form"
+                >
+                  {isCreateCalendarExpanded ? "Hide form" : "Expand form"}
+                </button>
+              </div>
+              <div
+                id="create-calendar-form"
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px",
+                  ...createTeamBodyStyle,
+                  maxHeight: isCreateCalendarExpanded ? "700px" : "0px",
+                  opacity: isCreateCalendarExpanded ? 1 : 0,
+                  marginTop: isCreateCalendarExpanded ? "16px" : "0px",
                 }}
               >
-                <input
-                  value={calendarTitle}
-                  onChange={(event) => setCalendarTitle(event.target.value)}
-                  placeholder="Event title"
-                  style={inputStyle}
-                />
-                <textarea
-                  value={calendarDescription}
-                  onChange={(event) =>
-                    setCalendarDescription(event.target.value)
-                  }
-                  placeholder="Description (optional)"
-                  rows={4}
+                <form
+                  onSubmit={handleCreateCalendarEvent}
                   style={{
-                    ...inputStyle,
-                    resize: "vertical" as const,
-                    fontFamily: "inherit",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "12px",
                   }}
-                />
-                <select
-                  value={calendarTeam}
-                  onChange={(event) => setCalendarTeam(event.target.value)}
-                  style={inputStyle}
                 >
-                  <option value="">Company-wide event</option>
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-                <label style={{ fontSize: "14px", color: "#4f4a44" }}>
-                  Start
-                </label>
-                <input
-                  type="datetime-local"
-                  value={calendarStart}
-                  onChange={(event) => setCalendarStart(event.target.value)}
-                  style={inputStyle}
-                />
-                <label style={{ fontSize: "14px", color: "#4f4a44" }}>
-                  End
-                </label>
-                <input
-                  type="datetime-local"
-                  value={calendarEnd}
-                  onChange={(event) => setCalendarEnd(event.target.value)}
-                  style={inputStyle}
-                />
-                <button
-                  type="submit"
-                  disabled={savingCalendar}
-                  style={buttonStyle}
-                >
-                  {savingCalendar ? "Saving..." : "Create Event"}
-                </button>
-              </form>
+                  <input
+                    value={calendarTitle}
+                    onChange={(event) => setCalendarTitle(event.target.value)}
+                    placeholder="Event title"
+                    style={inputStyle}
+                  />
+                  <textarea
+                    value={calendarDescription}
+                    onChange={(event) =>
+                      setCalendarDescription(event.target.value)
+                    }
+                    placeholder="Description (optional)"
+                    rows={4}
+                    style={{
+                      ...inputStyle,
+                      resize: "vertical" as const,
+                      fontFamily: "inherit",
+                    }}
+                  />
+                  <select
+                    value={calendarTeam}
+                    onChange={(event) => setCalendarTeam(event.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">Company-wide event</option>
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+                  <label style={{ fontSize: "14px", color: "#4f4a44" }}>
+                    Start
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={calendarStart}
+                    onChange={(event) => setCalendarStart(event.target.value)}
+                    style={inputStyle}
+                  />
+                  <label style={{ fontSize: "14px", color: "#4f4a44" }}>
+                    End
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={calendarEnd}
+                    onChange={(event) => setCalendarEnd(event.target.value)}
+                    style={inputStyle}
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingCalendar}
+                    style={buttonStyle}
+                  >
+                    {savingCalendar ? "Saving..." : "Create Event"}
+                  </button>
+                </form>
+              </div>
               {calendarMessage && <p style={messageStyle}>{calendarMessage}</p>}
             </div>
 
@@ -3141,17 +3284,39 @@ export default function ManagerPage({
                       {formatDate(String(event.start_at))} —{" "}
                       {formatDate(String(event.end_at))}
                     </p>
-                    <p
+                    <div
                       style={{
-                        margin: "6px 0 0",
-                        color: "#8a8175",
-                        fontSize: "13px",
+                        marginTop: "14px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-end",
+                        gap: "12px",
                       }}
                     >
-                      {event.team_id
-                        ? `Team: ${getTeamName(String(event.team_id))}`
-                        : "Company-wide"}
-                    </p>
+                      <div>
+                        <p
+                          style={{
+                            margin: "0",
+                            color: "#8a8175",
+                            fontSize: "13px",
+                          }}
+                        >
+                          {event.team_id
+                            ? `Team: ${getTeamName(String(event.team_id))}`
+                            : "Company-wide"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCalendarEvent(String(event.id))}
+                        disabled={deletingCalendarEventId === String(event.id)}
+                        style={announcementDeleteButtonStyle}
+                      >
+                        {deletingCalendarEventId === String(event.id)
+                          ? "Deleting..."
+                          : "Delete"}
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -3231,7 +3396,7 @@ export default function ManagerPage({
           <section id="announcements" style={managerSectionVisibility(activeSection, "announcements")}>
             <h3 style={{ marginTop: 0 }}>Company Announcements</h3>
 
-            <p style={subtitleStyle}>Share important updates with employees.</p>
+            <p style={subtitleStyle}> </p>
 
             <div
               style={{
@@ -3241,46 +3406,69 @@ export default function ManagerPage({
                 marginBottom: "30px",
               }}
             >
-              <h4>Post an Announcement</h4>
+              <div style={createTeamHeaderStyle}>
+                <h4 style={{ margin: 0 }}>Post an Announcement</h4>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIsCreateAnnouncementExpanded((current) => !current)
+                  }
+                  style={secondaryButtonStyle}
+                  aria-expanded={isCreateAnnouncementExpanded}
+                  aria-controls="create-announcement-form"
+                >
+                  {isCreateAnnouncementExpanded ? "Hide form" : "Expand form"}
+                </button>
+              </div>
 
-              <form
-                onSubmit={handleCreateAnnouncement}
+              <div
+                id="create-announcement-form"
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "14px",
+                  ...createTeamBodyStyle,
+                  maxHeight: isCreateAnnouncementExpanded ? "560px" : "0px",
+                  opacity: isCreateAnnouncementExpanded ? 1 : 0,
+                  marginTop: isCreateAnnouncementExpanded ? "16px" : "0px",
                 }}
               >
-                <input
-                  type="text"
-                  value={announcementTitle}
-                  onChange={(event) => setAnnouncementTitle(event.target.value)}
-                  placeholder="Announcement title"
-                  style={inputStyle}
-                />
-
-                <textarea
-                  value={announcementContent}
-                  onChange={(event) =>
-                    setAnnouncementContent(event.target.value)
-                  }
-                  placeholder="Write your announcement..."
-                  rows={6}
+                <form
+                  onSubmit={handleCreateAnnouncement}
                   style={{
-                    ...inputStyle,
-                    resize: "vertical",
-                    fontFamily: "inherit",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "14px",
                   }}
-                />
-
-                <button
-                  type="submit"
-                  disabled={savingAnnouncement}
-                  style={buttonStyle}
                 >
-                  {savingAnnouncement ? "Posting..." : "Post Announcement"}
-                </button>
-              </form>
+                  <input
+                    type="text"
+                    value={announcementTitle}
+                    onChange={(event) => setAnnouncementTitle(event.target.value)}
+                    placeholder="Announcement title"
+                    style={inputStyle}
+                  />
+
+                  <textarea
+                    value={announcementContent}
+                    onChange={(event) =>
+                      setAnnouncementContent(event.target.value)
+                    }
+                    placeholder="Write your announcement..."
+                    rows={6}
+                    style={{
+                      ...inputStyle,
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                    }}
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={savingAnnouncement}
+                    style={buttonStyle}
+                  >
+                    {savingAnnouncement ? "Posting..." : "Post Announcement"}
+                  </button>
+                </form>
+              </div>
 
               {announcementMessage && (
                 <p style={messageStyle}>{announcementMessage}</p>
@@ -3288,6 +3476,8 @@ export default function ManagerPage({
             </div>
 
             <h4>Latest Announcements</h4>
+
+            <p style={subtitleStyle}> </p>
 
             {announcements.length === 0 ? (
               <EmptyMessage>
@@ -3297,26 +3487,77 @@ export default function ManagerPage({
               <div style={listStyle}>
                 {filteredAnnouncements.map((announcement) => (
                   <article key={announcement.id} style={projectCardStyle}>
-                    <h4
-                      style={{
-                        marginTop: 0,
-                        marginBottom: "8px",
-                        fontSize: "20px",
-                      }}
-                    >
-                      {announcement.title}
-                    </h4>
+                    {editingAnnouncementId === announcement.id ? (
+                      <form
+                        onSubmit={(event) =>
+                          handleUpdateAnnouncement(event, announcement)
+                        }
+                        style={announcementEditFormStyle}
+                      >
+                        <input
+                          type="text"
+                          value={editingAnnouncementTitle}
+                          onChange={(event) =>
+                            setEditingAnnouncementTitle(event.target.value)
+                          }
+                          placeholder="Announcement title"
+                          style={inputStyle}
+                        />
+                        <textarea
+                          value={editingAnnouncementContent}
+                          onChange={(event) =>
+                            setEditingAnnouncementContent(event.target.value)
+                          }
+                          placeholder="Write your announcement..."
+                          rows={6}
+                          style={{
+                            ...inputStyle,
+                            resize: "vertical",
+                            fontFamily: "inherit",
+                          }}
+                        />
+                        <div style={announcementEditActionRowStyle}>
+                          <button
+                            type="submit"
+                            disabled={savingAnnouncementEdit}
+                            style={buttonStyle}
+                          >
+                            {savingAnnouncementEdit ? "Saving..." : "Save Changes"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditingAnnouncement}
+                            disabled={savingAnnouncementEdit}
+                            style={secondaryButtonStyle}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <h4
+                          style={{
+                            marginTop: 0,
+                            marginBottom: "8px",
+                            fontSize: "20px",
+                          }}
+                        >
+                          {announcement.title}
+                        </h4>
 
-                    <p
-                      style={{
-                        margin: 0,
-                        color: "#4f4a44",
-                        lineHeight: 1.7,
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {announcement.content}
-                    </p>
+                        <p
+                          style={{
+                            margin: 0,
+                            color: "#4f4a44",
+                            lineHeight: 1.7,
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {announcement.content}
+                        </p>
+                      </>
+                    )}
 
                     <div
                       style={{
@@ -3339,18 +3580,54 @@ export default function ManagerPage({
                         Posted {formatDate(announcement.created_at)}
                       </span>
 
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteAnnouncement(announcement)}
-                        disabled={deletingAnnouncementId === announcement.id}
-                        style={deleteButtonStyle}
-                      >
-                        {deletingAnnouncementId === announcement.id
-                          ? "Deleting..."
-                          : "Delete"}
-                      </button>
+                      <div style={announcementRowActionsStyle}>
+                        {editingAnnouncementId !== announcement.id && (
+                          <button
+                            type="button"
+                            onClick={() => startEditingAnnouncement(announcement)}
+                            style={announcementEditButtonStyle}
+                          >
+                            Edit
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAnnouncement(announcement)}
+                          disabled={deletingAnnouncementId === announcement.id}
+                          style={announcementDeleteButtonStyle}
+                        >
+                          {deletingAnnouncementId === announcement.id
+                            ? "Deleting..."
+                            : "Delete"}
+                        </button>
+                      </div>
                     </div>
                   </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section id="leaderboard" style={managerSectionVisibility(activeSection, "leaderboard")}>
+            <h3 style={{ marginTop: 0 }}>Leaderboard</h3>
+            <p style={subtitleStyle}></p>
+            {leaderboard.length === 0 ? (
+              <EmptyMessage>No employee scores are available yet.</EmptyMessage>
+            ) : (
+              <div style={leaderboardListStyle}>
+                {leaderboard.map((entry, index) => (
+                  <div key={entry.id} style={leaderboardRowStyle}>
+                    <strong style={leaderboardRankStyle}>#{index + 1}</strong>
+                    {entry.avatar_url ? (
+                      <img src={entry.avatar_url} alt={entry.full_name} style={leaderboardAvatarStyle} />
+                    ) : (
+                      <span style={leaderboardAvatarFallbackStyle}>
+                        {entry.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join("")}
+                      </span>
+                    )}
+                    <strong style={{ flex: 1 }}>{entry.full_name || "Unnamed employee"}</strong>
+                    <span style={leaderboardScoreStyle}>{entry.completed_projects} completed - {entry.points} points</span>
+                  </div>
                 ))}
               </div>
             )}
@@ -3459,6 +3736,285 @@ export default function ManagerPage({
           </section>
         </section>
       </div>
+      {inspectedProject && (
+        <div
+          onClick={() => setInspectedProject(null)}
+          style={projectInspectionModalBackdropStyle}
+        >
+          <article
+            onClick={(event) => event.stopPropagation()}
+            style={projectInspectionModalCardStyle}
+          >
+            <div style={cardHeaderStyle}>
+              <div>
+                <p style={eyebrowStyle}>{inspectedProject.project_id}</p>
+                <h4 style={{ margin: "6px 0" }}>
+                  Inspecting {inspectedProject.name}
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectedProject(null)}
+                style={secondaryButtonStyle}
+              >
+                Close Inspection
+              </button>
+            </div>
+
+            {inspectedProject.description && (
+              <p style={bodyTextStyle}>{inspectedProject.description}</p>
+            )}
+            <div style={projectInspectionGridStyle}>
+              <ProjectDetail
+                label="Status"
+                value={inspectedProject.status.replaceAll("_", " ")}
+              />
+              <ProjectDetail
+                label="Assignment"
+                value={
+                  inspectedProject.assignment_type === "team"
+                    ? getTeamName(inspectedProject.team_id)
+                    : getEmployeeName(inspectedProject.assigned_to)
+                }
+              />
+              <ProjectDetail
+                label="Deadline"
+                value={formatDeadline(inspectedProject.deadline)}
+              />
+            </div>
+            <div style={statusActionsStyle}>
+              <button
+                type="button"
+                onClick={() => handleProjectStatusChange("complete")}
+                style={
+                  inspectedProject.status === "complete"
+                    ? buttonStyle
+                    : secondaryButtonStyle
+                }
+              >
+                Mark Complete
+              </button>
+              <button
+                type="button"
+                onClick={() => handleProjectStatusChange("incomplete")}
+                style={
+                  inspectedProject.status === "incomplete"
+                    ? buttonStyle
+                    : secondaryButtonStyle
+                }
+              >
+                Mark Incomplete
+              </button>
+            </div>
+            <div style={actionsStyle}>
+              {inspectedProject.project_link && (
+                <a
+                  href={inspectedProject.project_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={projectLinkStyle}
+                >
+                  Open Project Link
+                </a>
+              )}
+              {inspectedProject.project_zip_url && (
+                <a
+                  href={inspectedProject.project_zip_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={projectLinkStyle}
+                >
+                  Download Project ZIP
+                </a>
+              )}
+            </div>
+
+            <h4 style={{ marginTop: "28px" }}>Project checklist</h4>
+            {projectTasks.length === 0 ? (
+              <EmptyMessage>No tasks have been added yet.</EmptyMessage>
+            ) : (
+              <div style={taskListStyle}>
+                {projectTasks.map((task) => (
+                  <label key={task.id} style={taskRowStyle}>
+                    <input
+                      type="checkbox"
+                      checked={task.is_complete}
+                      onChange={() => handleTaskCompletion(task)}
+                    />
+                    <span
+                      style={
+                        task.is_complete
+                          ? taskCompletedStyle
+                          : undefined
+                      }
+                    >
+                      {task.title}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <form onSubmit={handleAddProjectTask} style={taskFormStyle}>
+              <input
+                value={newTaskTitle}
+                onChange={(event) => setNewTaskTitle(event.target.value)}
+                placeholder="Add a project task..."
+                style={inputStyle}
+                required
+              />
+              <button
+                type="submit"
+                disabled={savingTask || !newTaskTitle.trim()}
+                style={buttonStyle}
+              >
+                {savingTask ? "Adding..." : "Add Task"}
+              </button>
+            </form>
+            {taskMessage && <p style={messageStyle}>{taskMessage}</p>}
+
+            <h4 style={{ marginTop: "28px" }}>Employee submissions</h4>
+            {projectSubmissions.length === 0 ? (
+              <EmptyMessage>No employee submissions yet.</EmptyMessage>
+            ) : (
+              <div style={listStyle}>
+                {projectSubmissions.map((submission) => (
+                  <div key={submission.id} style={submissionRowStyle}>
+                    <strong>{getEmployeeName(submission.employee_id)}</strong>
+                    {submission.file_url && (
+                      <a href={submission.file_url} target="_blank" rel="noreferrer" style={projectLinkStyle}>
+                        Download {submission.file_name || "file"}
+                      </a>
+                    )}
+                    {submission.submission_link && (
+                      <a href={submission.submission_link} target="_blank" rel="noreferrer" style={projectLinkStyle}>
+                        Open submitted link
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <h4 style={{ marginTop: "28px" }}>Comments</h4>
+            {loadingProjectComments ? (
+              <p style={subtitleStyle}>Loading comments...</p>
+            ) : projectComments.length === 0 ? (
+              <EmptyMessage>No comments have been added yet.</EmptyMessage>
+            ) : (
+              <div style={listStyle}>
+                {projectComments.map((projectComment) => (
+                  <div key={projectComment.id} style={commentStyle}>
+                    <strong>
+                      {projectComment.profiles?.full_name ||
+                        projectComment.profiles?.email ||
+                        "Manager"}
+                    </strong>
+                    <p style={bodyTextStyle}>{projectComment.content}</p>
+                    <p style={commentMetaStyle}>
+                      {formatDate(projectComment.created_at)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <form
+              onSubmit={handleAddProjectComment}
+              style={projectCommentFormStyle}
+            >
+              <textarea
+                value={projectCommentText}
+                onChange={(event) => setProjectCommentText(event.target.value)}
+                placeholder="Add an inspection comment..."
+                rows={4}
+                style={textareaStyle}
+                required
+              />
+              <button
+                type="submit"
+                disabled={savingProjectComment || !projectCommentText.trim()}
+                style={buttonStyle}
+              >
+                {savingProjectComment ? "Adding..." : "Add Comment"}
+              </button>
+            </form>
+            {projectCommentMessage && (
+              <p style={messageStyle}>{projectCommentMessage}</p>
+            )}
+          </article>
+        </div>
+      )}
+
+      {activeEmployeeProfile && (
+        <div
+          onClick={closeEmployeeProfile}
+          style={{
+            ...employeeModalBackdropStyle,
+            opacity: showEmployeeProfileModal ? 1 : 0,
+            pointerEvents: showEmployeeProfileModal ? "auto" : "none",
+          }}
+        >
+          <article
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              ...employeeModalCardStyle,
+              opacity: showEmployeeProfileModal ? 1 : 0,
+              transform: showEmployeeProfileModal
+                ? "translateY(0) scale(1)"
+                : "translateY(16px) scale(0.96)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={closeEmployeeProfile}
+              style={employeeModalCloseStyle}
+              aria-label="Close employee profile"
+            >
+              Close
+            </button>
+            <div style={employeeModalHeaderStyle}>
+              {activeEmployeeProfile.avatar_url ? (
+                <img
+                  src={activeEmployeeProfile.avatar_url}
+                  alt={activeEmployeeProfile.full_name || "Employee profile"}
+                  style={employeeModalAvatarStyle}
+                />
+              ) : (
+                <span style={employeeModalAvatarFallbackStyle}>
+                  {getEmployeeInitials(activeEmployeeProfile)}
+                </span>
+              )}
+              <div>
+                <p style={employeeModalEyebrowStyle}>Employee Profile</p>
+                <h4 style={employeeModalNameStyle}>
+                  {activeEmployeeProfile.full_name || "Unnamed employee"}
+                </h4>
+                <p style={employeeModalEmailStyle}>{activeEmployeeProfile.email}</p>
+              </div>
+            </div>
+            <div style={employeeModalGridStyle}>
+              <ProjectDetail label="Role" value={activeEmployeeProfile.role} />
+              <ProjectDetail
+                label="Team count"
+                value={String(activeEmployeeTeamNames.length)}
+              />
+            </div>
+            <div style={{ marginTop: "16px" }}>
+              <p style={employeeModalTeamsHeadingStyle}>Teams</p>
+              {activeEmployeeTeamNames.length === 0 ? (
+                <p style={teamMemberEmptyStyle}>No team memberships found.</p>
+              ) : (
+                <div style={employeeModalTagListStyle}>
+                  {activeEmployeeTeamNames.map((teamName) => (
+                    <span key={teamName} style={employeeModalTagStyle}>
+                      {teamName}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </article>
+        </div>
+      )}
     </main>
   );
 }
@@ -3728,9 +4284,72 @@ const deleteButtonStyle = {
   cursor: "pointer",
 };
 
+const subtleDeleteButtonStyle = {
+  marginTop: "12px",
+  padding: "5px 10px",
+  border: "1px solid #ddd4c8",
+  borderRadius: "999px",
+  background: "#ffffff",
+  color: "#8a8175",
+  fontSize: "12px",
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const announcementDeleteButtonStyle = {
+  padding: "6px 11px",
+  border: "1px solid #d7bcbc",
+  borderRadius: "8px",
+  background: "#ffffff",
+  color: "#9a3e3e",
+  fontSize: "12px",
+  cursor: "pointer",
+};
+
+const announcementEditButtonStyle = {
+  padding: "6px 11px",
+  border: "1px solid #d8d0c5",
+  borderRadius: "8px",
+  background: "#ffffff",
+  color: "#625d56",
+  fontSize: "12px",
+  cursor: "pointer",
+};
+
+const announcementEditFormStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "12px",
+};
+
+const announcementEditActionRowStyle = {
+  display: "flex",
+  gap: "10px",
+  flexWrap: "wrap" as const,
+};
+
+const announcementRowActionsStyle = {
+  display: "flex",
+  gap: "8px",
+  alignItems: "center",
+};
+
 const messageStyle = {
   marginTop: "14px",
   color: "#716b63",
+};
+
+const createTeamHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
+  flexWrap: "wrap" as const,
+};
+
+const createTeamBodyStyle = {
+  overflow: "hidden",
+  transition: "max-height 220ms ease, opacity 220ms ease, margin-top 220ms ease",
 };
 
 const itemStyle = {
@@ -3742,10 +4361,29 @@ const itemStyle = {
 const employeeCardStyle = {
   display: "flex",
   alignItems: "center",
+  justifyContent: "space-between",
   gap: "14px",
   padding: "14px 18px",
   border: "1px solid #e5dfd6",
   borderRadius: "12px",
+};
+
+const employeeInfoStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "2px",
+  minWidth: 0,
+  flex: 1,
+};
+
+const employeeAvatarButtonStyle = {
+  border: "none",
+  background: "transparent",
+  padding: 0,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
 };
 
 const employeeAvatarStyle = {
@@ -3772,6 +4410,18 @@ const employeeEmailStyle = {
   color: "#716b63",
 };
 
+const evaluateButtonStyle = {
+  padding: "6px 10px",
+  border: "1px solid #d8d0c5",
+  borderRadius: "999px",
+  background: "#ffffff",
+  color: "#4f4a44",
+  fontSize: "12px",
+  fontWeight: 600,
+  cursor: "pointer",
+  lineHeight: 1.2,
+};
+
 const teamMemberLabelStyle = {
   margin: "12px 0 0",
   color: "#716b63",
@@ -3791,12 +4441,170 @@ const teamMemberListStyle = {
   lineHeight: 1.7,
 };
 
+const profileIconStyle = {
+  marginLeft: "auto",
+  width: "24px",
+  height: "24px",
+  borderRadius: "50%",
+  border: "1px solid #d8d0c5",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "#716b63",
+};
+
+const employeeModalBackdropStyle = {
+  position: "fixed" as const,
+  inset: 0,
+  zIndex: 90,
+  background: "rgba(20, 17, 13, 0.4)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "20px",
+  transition: "opacity 180ms ease",
+};
+
+const employeeModalCardStyle = {
+  width: "min(560px, 100%)",
+  borderRadius: "18px",
+  background: "linear-gradient(135deg, #fffaf2 0%, #ffffff 100%)",
+  border: "1px solid #e4d6bf",
+  boxShadow: "0 24px 60px rgba(34, 28, 20, 0.22)",
+  padding: "22px",
+  position: "relative" as const,
+  transition: "opacity 180ms ease, transform 180ms ease",
+};
+
+const employeeModalCloseStyle = {
+  position: "absolute" as const,
+  right: "14px",
+  top: "14px",
+  border: "1px solid #d8d0c5",
+  borderRadius: "999px",
+  background: "#ffffff",
+  color: "#4f4a44",
+  fontSize: "12px",
+  fontWeight: 700,
+  padding: "7px 11px",
+  cursor: "pointer",
+};
+
+const employeeModalHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "14px",
+  paddingRight: "80px",
+};
+
+const employeeModalAvatarStyle = {
+  width: "78px",
+  height: "78px",
+  borderRadius: "50%",
+  objectFit: "cover" as const,
+};
+
+const employeeModalAvatarFallbackStyle = {
+  ...employeeModalAvatarStyle,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#222222",
+  color: "#ffffff",
+  fontSize: "24px",
+  fontWeight: 700,
+};
+
+const employeeModalEyebrowStyle = {
+  margin: 0,
+  color: "#8a8175",
+  fontSize: "11px",
+  letterSpacing: "1.2px",
+  textTransform: "uppercase" as const,
+  fontWeight: 700,
+};
+
+const employeeModalNameStyle = {
+  margin: "6px 0 4px",
+  fontSize: "24px",
+  color: "#2e2a24",
+};
+
+const employeeModalEmailStyle = {
+  margin: 0,
+  color: "#625d56",
+};
+
+const employeeModalGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+  gap: "10px",
+  marginTop: "18px",
+};
+
+const employeeModalTeamsHeadingStyle = {
+  margin: "0 0 10px",
+  color: "#4f4a44",
+  fontWeight: 700,
+};
+
+const employeeModalTagListStyle = {
+  display: "flex",
+  gap: "8px",
+  flexWrap: "wrap" as const,
+};
+
+const employeeModalTagStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "6px 10px",
+  borderRadius: "999px",
+  border: "1px solid #decfb7",
+  background: "#fff4df",
+  color: "#5a4d3b",
+  fontSize: "12px",
+  fontWeight: 600,
+};
+
 const projectCardStyle = {
   padding: "22px",
   border: "1px solid #e5dfd6",
   borderRadius: "14px",
   background: "#ffffff",
 };
+
+const leaderboardListStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "10px",
+};
+const leaderboardRowStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  padding: "14px",
+  border: "1px solid #e5dfd6",
+  borderRadius: "10px",
+  background: "#ffffff",
+};
+const leaderboardRankStyle = { width: "34px", color: "#8a8175" };
+const leaderboardAvatarStyle = {
+  width: "42px",
+  height: "42px",
+  borderRadius: "50%",
+  objectFit: "cover" as const,
+};
+const leaderboardAvatarFallbackStyle = {
+  ...leaderboardAvatarStyle,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#222222",
+  color: "#ffffff",
+  fontSize: "13px",
+  fontWeight: 700,
+};
+const leaderboardScoreStyle = { color: "#625d56", fontSize: "13px" };
 
 const cardHeaderStyle = {
   display: "flex",
@@ -3827,6 +4635,28 @@ const projectInspectionGridStyle = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
   gap: "12px",
+};
+
+const projectInspectionModalBackdropStyle = {
+  position: "fixed" as const,
+  inset: 0,
+  zIndex: 95,
+  background: "rgba(20, 17, 13, 0.35)",
+  backdropFilter: "blur(7px)",
+  WebkitBackdropFilter: "blur(7px)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "20px",
+};
+
+const projectInspectionModalCardStyle = {
+  width: "min(980px, 100%)",
+  maxHeight: "88vh",
+  overflowY: "auto" as const,
+  ...projectCardStyle,
+  marginTop: 0,
+  boxShadow: "0 24px 60px rgba(16, 13, 9, 0.25)",
 };
 const statusActionsStyle = {
   display: "flex",

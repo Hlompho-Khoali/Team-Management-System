@@ -8,6 +8,9 @@ export type DashboardSection =
   | "overview"
   | "profile"
   | "projects"
+  | "archived-projects"
+  | "leaderboard"
+  | "poe"
   | "teams"
   | "find-team"
   | "messages"
@@ -23,6 +26,17 @@ type Profile = {
   role: string;
   avatar_url?: string | null;
   created_at?: string;
+};
+type LeaderboardEntry = {
+  id: string;
+  full_name: string;
+  avatar_url?: string | null;
+  completed_projects: number;
+  points: number;
+};
+type PoeLinks = {
+  github_url: string;
+  linkedin_url: string;
 };
 type Team = {
   id: string;
@@ -125,6 +139,14 @@ export default function EmployeeDashboard({
   const [availableTeams, setAvailableTeams] = useState<Team[]>([]);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [poeLinks, setPoeLinks] = useState<PoeLinks>({
+    github_url: "",
+    linkedin_url: "",
+  });
+  const [poeMessage, setPoeMessage] = useState("");
+  const [savingPoeLinks, setSavingPoeLinks] = useState(false);
+  const [archivedProjectIds, setArchivedProjectIds] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -217,6 +239,31 @@ export default function EmployeeDashboard({
     setSettingsFullName(profileData.full_name || "");
     setSettingsEmail(profileData.email || user.email || "");
 
+    const { data: leaderboardData, error: leaderboardError } = await supabase.rpc(
+      "get_employee_leaderboard",
+    );
+    if (leaderboardError) {
+      console.error("Error loading leaderboard:", {
+        message: leaderboardError.message,
+        code: leaderboardError.code,
+        details: leaderboardError.details,
+        hint: leaderboardError.hint,
+      });
+      setPageMessage(
+        "The leaderboard is not configured yet. Run the employee leaderboard SQL migration in Supabase.",
+      );
+    } else {
+      setLeaderboard((leaderboardData ?? []) as LeaderboardEntry[]);
+    }
+
+    const { data: poeData, error: poeError } = await supabase
+      .from("poe_links")
+      .select("github_url, linkedin_url")
+      .eq("employee_id", user.id)
+      .maybeSingle();
+    if (poeError) console.error("Error loading POE links:", poeError);
+    else if (poeData) setPoeLinks(poeData as PoeLinks);
+
     const { data: membershipData, error: membershipError } = await supabase
       .from("team_members")
       .select("team_id, joined_at")
@@ -289,6 +336,13 @@ export default function EmployeeDashboard({
             (!!project.team_id && teamIds.includes(project.team_id)),
         ),
       );
+
+    const { data: archiveData, error: archiveError } = await supabase
+      .from("project_archives")
+      .select("project_id")
+      .eq("employee_id", user.id);
+    if (archiveError) console.error("Error loading archived projects:", archiveError);
+    else setArchivedProjectIds((archiveData ?? []).map((item) => item.project_id));
 
     const { data: taskData, error: taskError } = await supabase
       .from("project_tasks")
@@ -594,6 +648,51 @@ export default function EmployeeDashboard({
     );
   }
 
+  async function handleSavePoeLinks(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile) return;
+    setSavingPoeLinks(true);
+    setPoeMessage("");
+    const { error } = await supabase.from("poe_links").upsert(
+      {
+        employee_id: profile.id,
+        github_url: poeLinks.github_url.trim() || null,
+        linkedin_url: poeLinks.linkedin_url.trim() || null,
+      },
+      { onConflict: "employee_id" },
+    );
+    setPoeMessage(error?.message || "Portfolio links saved successfully.");
+    setSavingPoeLinks(false);
+  }
+
+  async function archiveProject(project: Project) {
+    if (!profile || project.status !== "complete") return;
+    const { error } = await supabase
+      .from("project_archives")
+      .insert({ project_id: project.id, employee_id: profile.id });
+    if (error) {
+      setPageMessage(error.message);
+      return;
+    }
+    setArchivedProjectIds((current) => [...current, project.id]);
+    setPageMessage("Project archived.");
+  }
+
+  async function restoreProject(project: Project) {
+    if (!profile) return;
+    const { error } = await supabase
+      .from("project_archives")
+      .delete()
+      .eq("project_id", project.id)
+      .eq("employee_id", profile.id);
+    if (error) {
+      setPageMessage(error.message);
+      return;
+    }
+    setArchivedProjectIds((current) => current.filter((id) => id !== project.id));
+    setPageMessage("Project restored.");
+  }
+
   async function handleProjectSubmission(projectId: string) {
     if (!profile) return;
     const file = submissionFiles[projectId];
@@ -853,6 +952,7 @@ export default function EmployeeDashboard({
   const filteredTeams = teams.filter((team) => matchesSearch(team.name, team.description));
   const filteredProjects = projects.filter((project) =>
     matchesSearch(project.project_id, project.name, project.description) &&
+    !archivedProjectIds.includes(project.id) &&
     (projectStatusFilter === "all" || project.status === projectStatusFilter) &&
     (projectTeamFilter === "all" || project.team_id === projectTeamFilter) &&
     (projectDeadlineFilter === "all" ||
@@ -870,11 +970,16 @@ export default function EmployeeDashboard({
   const filteredMessages = messages.filter((message) =>
     matchesSearch(message.content, message.body, senderNames[message.sender_id || ""]),
   );
+  const archivedProjects = projects.filter(
+    (project) =>
+      archivedProjectIds.includes(project.id) &&
+      matchesSearch(project.project_id, project.name, project.description),
+  );
 
   if (loading)
     return (
       <main style={loadingStyle}>
-        <p>Loading your EdBook workspace...</p>
+        <p>Loading your Work-Integrated Learning workspace...</p>
       </main>
     );
   if (!profile)
@@ -888,7 +993,7 @@ export default function EmployeeDashboard({
     <main style={pageStyle}>
       <header style={headerStyle}>
         <div>
-          <h1 style={{ margin: 0 }}>EdBook</h1>
+          <h1 style={{ margin: 0 }}>Work-Integrated Learning</h1>
           <p style={headerSubtitle}>Employee Workspace</p>
         </div>
         <div style={headerUser}>
@@ -938,6 +1043,15 @@ export default function EmployeeDashboard({
             <Link href="/dashboard/projects" style={navLinkStyle}>
               My Projects
             </Link>
+            <Link href="/dashboard/archived-projects" style={navLinkStyle}>
+              Archived Projects
+            </Link>
+            <Link href="/dashboard/leaderboard" style={navLinkStyle}>
+              Leaderboard
+            </Link>
+            <Link href="/dashboard/poe" style={navLinkStyle}>
+              POE
+            </Link>
             <Link href="/dashboard/teams" style={navLinkStyle}>
               My Teams
             </Link>
@@ -965,15 +1079,21 @@ export default function EmployeeDashboard({
           </button>
         </aside>
         <section style={contentStyle}>
-          <div style={searchBarStyle}>
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search teams, projects, announcements, or messages..."
-              aria-label="Search workspace"
-              style={searchInputStyle}
-            />
-          </div>
+          {activeSection !== "leaderboard" &&
+            activeSection !== "poe" &&
+            activeSection !== "profile" &&
+            activeSection !== "overview" &&
+            activeSection !== "teams" && (
+            <div style={searchBarStyle}>
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search teams, projects, announcements, or messages..."
+                aria-label="Search workspace"
+                style={searchInputStyle}
+              />
+            </div>
+          )}
           {pageMessage && <div style={noticeStyle}>{pageMessage}</div>}
           <section id="overview" style={sectionVisibility(activeSection, "overview")}>
             <p style={eyebrowStyle}>Your Workspace</p>
@@ -1099,6 +1219,15 @@ export default function EmployeeDashboard({
                         )}
                       </div>
                     )}
+                    {project.status === "complete" && (
+                      <button
+                        type="button"
+                        onClick={() => archiveProject(project)}
+                        style={secondaryButtonStyle}
+                      >
+                        Archive project
+                      </button>
+                    )}
                     <div style={employeeTaskSectionStyle}>
                       <h4 style={employeeTaskHeadingStyle}>Project checklist</h4>
                       {projectTasks.filter((task) => task.project_id === project.id)
@@ -1168,6 +1297,43 @@ export default function EmployeeDashboard({
                         </div>
                       ))}
                     </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section id="archived-projects" style={sectionVisibility(activeSection, "archived-projects")}>
+            <SectionHeading
+              title="Archived Projects"
+              subtitle="Completed projects you have moved out of your active workspace."
+            />
+            {archivedProjects.length === 0 ? (
+              <EmptyMessage>No archived projects found.</EmptyMessage>
+            ) : (
+              <div style={listStyle}>
+                {archivedProjects.map((project) => (
+                  <article key={project.id} style={cardStyle}>
+                    <div style={cardTopStyle}>
+                      <div>
+                        <p style={smallLabelStyle}>{project.project_id}</p>
+                        <h4 style={cardTitleStyle}>{project.name}</h4>
+                      </div>
+                      <span style={statusStyle(project.status)}>
+                        {project.status.toUpperCase()}
+                      </span>
+                    </div>
+                    {project.description && <p style={bodyTextStyle}>{project.description}</p>}
+                    <p style={metaTextStyle}>
+                      Deadline: {formatDate(project.deadline)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => restoreProject(project)}
+                      style={secondaryButtonStyle}
+                    >
+                      Restore project
+                    </button>
                   </article>
                 ))}
               </div>
@@ -1488,6 +1654,83 @@ export default function EmployeeDashboard({
             )}
           </section>
 
+          <section id="leaderboard" style={sectionVisibility(activeSection, "leaderboard")}>
+            <SectionHeading
+              title="Leaderboard"
+              subtitle="Earn one point for every completed project."
+            />
+            {leaderboard.length === 0 ? (
+              <EmptyMessage>No employee scores are available yet.</EmptyMessage>
+            ) : (
+              <div style={leaderboardListStyle}>
+                {leaderboard.map((entry, index) => (
+                  <div key={entry.id} style={leaderboardRowStyle}>
+                    <strong style={leaderboardRankStyle}>#{index + 1}</strong>
+                    {entry.avatar_url ? (
+                      <img src={entry.avatar_url} alt={entry.full_name} style={leaderboardAvatarStyle} />
+                    ) : (
+                      <span style={leaderboardAvatarFallbackStyle}>
+                        {entry.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join("")}
+                      </span>
+                    )}
+                    <strong style={{ flex: 1 }}>{entry.full_name || "Unnamed employee"}</strong>
+                    <span style={leaderboardScoreStyle}>{entry.completed_projects} completed - {entry.points} points</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section id="poe" style={sectionVisibility(activeSection, "poe")}>
+            <SectionHeading
+              title="Portfolio of Evidence"
+              subtitle="Showcase your project experience and professional links."
+            />
+            <div style={poeReferenceStyle}>
+              <p style={smallLabelStyle}>Reference</p>
+              <strong>Chris Mocks</strong>
+              <p style={metaTextStyle}>Available as an employment reference.</p>
+            </div>
+            <div style={listStyle}>
+              {projects.map((project) => (
+                <article key={project.id} style={cardStyle}>
+                  <p style={smallLabelStyle}>{project.project_id}</p>
+                  <h4 style={cardTitleStyle}>{project.name}</h4>
+                  {project.description && (
+                    <p style={bodyTextStyle}>{project.description}</p>
+                  )}
+                </article>
+              ))}
+            </div>
+            <form onSubmit={handleSavePoeLinks} style={poeFormStyle}>
+              <h4 style={cardTitleStyle}>Professional links</h4>
+              <label style={labelStyle}>GitHub link</label>
+              <input
+                type="url"
+                value={poeLinks.github_url}
+                onChange={(event) =>
+                  setPoeLinks((current) => ({ ...current, github_url: event.target.value }))
+                }
+                placeholder="https://github.com/your-name"
+                style={inputStyle}
+              />
+              <label style={labelStyle}>LinkedIn link</label>
+              <input
+                type="url"
+                value={poeLinks.linkedin_url}
+                onChange={(event) =>
+                  setPoeLinks((current) => ({ ...current, linkedin_url: event.target.value }))
+                }
+                placeholder="https://www.linkedin.com/in/your-name"
+                style={inputStyle}
+              />
+              <button type="submit" disabled={savingPoeLinks} style={buttonStyle}>
+                {savingPoeLinks ? "Saving..." : "Save links"}
+              </button>
+              {poeMessage && <p style={successTextStyle}>{poeMessage}</p>}
+            </form>
+          </section>
+
           <section id="settings" style={sectionVisibility(activeSection, "settings")}>
             <SectionHeading
               title="Settings"
@@ -1762,6 +2005,55 @@ const searchInputStyle = {
   background: "#ffffff",
   color: "#222222",
   fontSize: "14px",
+};
+const leaderboardListStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "10px",
+};
+const leaderboardRowStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  padding: "14px",
+  border: "1px solid #e5dfd6",
+  borderRadius: "10px",
+  background: "#ffffff",
+};
+const leaderboardRankStyle = { width: "34px", color: "#8a8175" };
+const leaderboardAvatarStyle = {
+  width: "42px",
+  height: "42px",
+  borderRadius: "50%",
+  objectFit: "cover" as const,
+};
+const leaderboardAvatarFallbackStyle = {
+  ...leaderboardAvatarStyle,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#222222",
+  color: "#ffffff",
+  fontSize: "13px",
+  fontWeight: 700,
+};
+const leaderboardScoreStyle = { color: "#625d56", fontSize: "13px" };
+const poeReferenceStyle = {
+  padding: "18px",
+  marginBottom: "18px",
+  border: "1px solid #e5dfd6",
+  borderRadius: "10px",
+  background: "#f8f5ef",
+};
+const poeFormStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  gap: "8px",
+  marginTop: "24px",
+  padding: "20px",
+  border: "1px solid #e5dfd6",
+  borderRadius: "12px",
+  background: "#ffffff",
 };
 const projectFiltersStyle = {
   display: "flex",

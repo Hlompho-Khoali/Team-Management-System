@@ -4,12 +4,15 @@ import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
+const SIGNUP_ACCESS_CODE = "4428P-600&x_yah/t2JqKL-99";
+
 export default function SignupPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [accessCode, setAccessCode] = useState("");
 
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,6 +23,11 @@ export default function SignupPage() {
 
     setMessage("");
     setSuccess(false);
+
+    if (accessCode !== SIGNUP_ACCESS_CODE) {
+      setMessage("The access code is incorrect.");
+      return;
+    }
 
     if (password !== confirmPassword) {
       setMessage("Passwords do not match.");
@@ -78,6 +86,7 @@ export default function SignupPage() {
     setEmail("");
     setPassword("");
     setConfirmPassword("");
+    setAccessCode("");
 
     setLoading(false);
   }
@@ -115,7 +124,7 @@ export default function SignupPage() {
               fontWeight: 700,
             }}
           >
-            EdBook
+            Work-Integrated Learning
           </Link>
 
           <p
@@ -150,7 +159,7 @@ export default function SignupPage() {
               lineHeight: 1.6,
             }}
           >
-            Create your EdBook employee account to access your company
+            Create your Work-Integrated Learning employee account to access your company
             workspace.
           </p>
         </div>
@@ -247,6 +256,23 @@ export default function SignupPage() {
             />
           </div>
 
+          <div style={{ marginBottom: "24px" }}>
+            <label htmlFor="accessCode" style={labelStyle}>
+              Access code
+            </label>
+
+            <input
+              id="accessCode"
+              type="password"
+              placeholder="Enter your access code"
+              value={accessCode}
+              onChange={(event) => setAccessCode(event.target.value)}
+              required
+              autoComplete="off"
+              style={inputStyle}
+            />
+          </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -307,7 +333,7 @@ export default function SignupPage() {
               fontSize: "14px",
             }}
           >
-            Sign in to EdBook →
+            Sign in to Work-Integrated Learning →
           </Link>
         </div>
 
@@ -325,7 +351,7 @@ export default function SignupPage() {
               fontSize: "14px",
             }}
           >
-            ← Back to EdBook
+            ← Back to Work-Integrated Learning
           </Link>
         </div>
       </div>

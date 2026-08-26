@@ -121,7 +121,7 @@ export default function LoginPage() {
               fontWeight: 700,
             }}
           >
-            EdBook
+            Work-Integrated Learning
           </Link>
 
           <p
@@ -158,7 +158,7 @@ export default function LoginPage() {
           >
             {forgotPassword
               ? "Enter your email and we will send you a secure reset link."
-              : "Sign in to continue to your EdBook workspace."}
+              : "Sign in to continue to your Work-Integrated Learning workspace."}
           </p>
         </div>
 
@@ -295,7 +295,7 @@ export default function LoginPage() {
               fontSize: "14px",
             }}
           >
-            ← Back to EdBook
+            ← Back to Work-Integrated Learning
           </Link>
         </div>
       </div>
