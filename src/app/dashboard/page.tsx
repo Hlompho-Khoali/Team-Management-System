@@ -38,6 +38,24 @@ type PoeLinks = {
   github_url: string;
   linkedin_url: string;
 };
+type PoeDocumentType = "poe_brief" | "initial_evaluation" | "final_evaluation";
+type PoeTemplate = {
+  document_type: PoeDocumentType;
+  file_url: string | null;
+  file_name: string | null;
+};
+type PoeSubmission = {
+  id: string;
+  employee_id: string;
+  document_type: PoeDocumentType;
+  file_url: string | null;
+  file_name: string | null;
+  submitted_at: string | null;
+  signed_file_url: string | null;
+  signed_file_name: string | null;
+  signed_at: string | null;
+  status: string;
+};
 type Team = {
   id: string;
   name: string;
@@ -90,6 +108,8 @@ type Announcement = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  file_url?: string | null;
+  file_name?: string | null;
 };
 type Conversation = {
   id: string;
@@ -129,6 +149,18 @@ type Notification = {
 };
 type TeamWithMembership = Team & { joined_at?: string };
 
+const POE_DOCUMENT_TYPES: PoeDocumentType[] = [
+  "poe_brief",
+  "initial_evaluation",
+  "final_evaluation",
+];
+
+const POE_DOCUMENT_LABELS: Record<PoeDocumentType, string> = {
+  poe_brief: "POE Brief Form",
+  initial_evaluation: "Initial Employer Evaluation Form",
+  final_evaluation: "Final Employer Evaluation Form",
+};
+
 export default function EmployeeDashboard({
   activeSection = "overview",
 }: {
@@ -146,6 +178,16 @@ export default function EmployeeDashboard({
   });
   const [poeMessage, setPoeMessage] = useState("");
   const [savingPoeLinks, setSavingPoeLinks] = useState(false);
+  const [poeTemplates, setPoeTemplates] = useState<Record<PoeDocumentType, PoeTemplate | undefined>>(
+    {} as Record<PoeDocumentType, PoeTemplate | undefined>,
+  );
+  const [poeSubmissions, setPoeSubmissions] = useState<
+    Record<PoeDocumentType, PoeSubmission | undefined>
+  >({} as Record<PoeDocumentType, PoeSubmission | undefined>);
+  const [poeUploadFiles, setPoeUploadFiles] = useState<
+    Record<PoeDocumentType, File | undefined>
+  >({} as Record<PoeDocumentType, File | undefined>);
+  const [uploadingPoeDocument, setUploadingPoeDocument] = useState<PoeDocumentType | null>(null);
   const [archivedProjectIds, setArchivedProjectIds] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -264,6 +306,35 @@ export default function EmployeeDashboard({
     if (poeError) console.error("Error loading POE links:", poeError);
     else if (poeData) setPoeLinks(poeData as PoeLinks);
 
+    const { data: templateData, error: templateError } = await supabase
+      .from("poe_document_templates")
+      .select("document_type, file_url, file_name");
+    if (templateError) {
+      console.error("Error loading POE templates:", templateError);
+    } else if (templateData) {
+      const templateMap = {} as Record<PoeDocumentType, PoeTemplate | undefined>;
+      for (const template of templateData as PoeTemplate[]) {
+        templateMap[template.document_type] = template;
+      }
+      setPoeTemplates(templateMap);
+    }
+
+    const { data: poeSubmissionData, error: poeSubmissionError } = await supabase
+      .from("poe_submissions")
+      .select(
+        "id, employee_id, document_type, file_url, file_name, submitted_at, signed_file_url, signed_file_name, signed_at, status",
+      )
+      .eq("employee_id", user.id);
+    if (poeSubmissionError) {
+      console.error("Error loading POE submissions:", poeSubmissionError);
+    } else if (poeSubmissionData) {
+      const submissionMap = {} as Record<PoeDocumentType, PoeSubmission | undefined>;
+      for (const submission of poeSubmissionData as PoeSubmission[]) {
+        submissionMap[submission.document_type] = submission;
+      }
+      setPoeSubmissions(submissionMap);
+    }
+
     const { data: membershipData, error: membershipError } = await supabase
       .from("team_members")
       .select("team_id, joined_at")
@@ -360,7 +431,7 @@ export default function EmployeeDashboard({
 
     const { data: announcementData, error: announcementError } = await supabase
       .from("announcements")
-      .select("id, title, content, created_by, created_at, updated_at")
+      .select("id, title, content, created_by, created_at, updated_at, file_url, file_name")
       .order("created_at", { ascending: false });
     if (announcementError)
       console.error("Error loading announcements:", announcementError);
@@ -370,8 +441,14 @@ export default function EmployeeDashboard({
       .from("conversation_members")
       .select("conversation_id")
       .eq("user_id", user.id);
-    if (cmError)
-      console.error("Error loading conversation memberships:", cmError);
+    if (cmError) {
+      console.error("Error loading conversation memberships:", {
+        message: cmError.message,
+        code: cmError.code,
+        details: cmError.details,
+        hint: cmError.hint,
+      });
+    }
     const conversationIds = (cmData ?? []).map((item) => item.conversation_id);
     if (conversationIds.length) {
       const { data: conversationData, error: conversationError } =
@@ -663,6 +740,53 @@ export default function EmployeeDashboard({
     );
     setPoeMessage(error?.message || "Portfolio links saved successfully.");
     setSavingPoeLinks(false);
+  }
+
+  async function handleUploadPoeSubmission(documentType: PoeDocumentType) {
+    if (!profile) return;
+    const file = poeUploadFiles[documentType];
+    if (!file) {
+      setPoeMessage("Please choose a signed file to upload.");
+      return;
+    }
+    setUploadingPoeDocument(documentType);
+    setPoeMessage("");
+    const filePath = `${profile.id}/${documentType}/${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage
+      .from("poe-submissions")
+      .upload(filePath, file, { upsert: false, contentType: file.type });
+    if (uploadError) {
+      setPoeMessage(uploadError.message);
+      setUploadingPoeDocument(null);
+      return;
+    }
+    const fileUrl = supabase.storage.from("poe-submissions").getPublicUrl(filePath).data.publicUrl;
+    const { data, error } = await supabase
+      .from("poe_submissions")
+      .upsert(
+        {
+          employee_id: profile.id,
+          document_type: documentType,
+          file_url: fileUrl,
+          file_name: file.name,
+          submitted_at: new Date().toISOString(),
+          status: "submitted",
+        },
+        { onConflict: "employee_id,document_type" },
+      )
+      .select(
+        "id, employee_id, document_type, file_url, file_name, submitted_at, signed_file_url, signed_file_name, signed_at, status",
+      )
+      .single();
+    if (error || !data) {
+      setPoeMessage(error?.message || "Unable to upload the signed form.");
+      setUploadingPoeDocument(null);
+      return;
+    }
+    setPoeSubmissions((current) => ({ ...current, [documentType]: data as PoeSubmission }));
+    setPoeUploadFiles((current) => ({ ...current, [documentType]: undefined }));
+    setPoeMessage("Signed form uploaded successfully.");
+    setUploadingPoeDocument(null);
   }
 
   async function archiveProject(project: Project) {
@@ -1645,6 +1769,16 @@ export default function EmployeeDashboard({
                   <article key={announcement.id} style={cardStyle}>
                     <h4 style={cardTitleStyle}>{announcement.title}</h4>
                     <p style={bodyTextStyle}>{announcement.content}</p>
+                    {announcement.file_url && (
+                      <a
+                        href={announcement.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ ...linkButtonStyle, display: "inline-block", marginTop: "8px" }}
+                      >
+                        Download {announcement.file_name || "attachment"}
+                      </a>
+                    )}
                     <p style={metaTextStyle}>
                       Posted {formatDate(announcement.created_at)}
                     </p>
@@ -1691,6 +1825,72 @@ export default function EmployeeDashboard({
               <strong>Chris Mocks</strong>
               <p style={metaTextStyle}>Available as an employment reference.</p>
             </div>
+            <div style={listStyle}>
+              {POE_DOCUMENT_TYPES.map((documentType) => {
+                const template = poeTemplates[documentType];
+                const submission = poeSubmissions[documentType];
+                return (
+                  <article key={documentType} style={cardStyle}>
+                    <h4 style={cardTitleStyle}>{POE_DOCUMENT_LABELS[documentType]}</h4>
+                    {template?.file_url ? (
+                      <a
+                        href={template.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={linkButtonStyle}
+                      >
+                        Download blank form
+                      </a>
+                    ) : (
+                      <p style={metaTextStyle}>Blank form not uploaded yet.</p>
+                    )}
+
+                    {submission?.file_url && (
+                      <p style={metaTextStyle}>
+                        Your signed upload: {submission.file_name} —{" "}
+                        <a href={submission.file_url} target="_blank" rel="noreferrer">
+                          Download
+                        </a>
+                      </p>
+                    )}
+
+                    {submission?.signed_file_url ? (
+                      <p style={successTextStyle}>
+                        Countersigned by manager: {submission.signed_file_name} —{" "}
+                        <a href={submission.signed_file_url} target="_blank" rel="noreferrer">
+                          Download
+                        </a>
+                      </p>
+                    ) : submission?.file_url ? (
+                      <p style={metaTextStyle}>Waiting for the manager to sign and return this form.</p>
+                    ) : null}
+
+                    <div style={submissionSectionStyle}>
+                      <h4 style={employeeTaskHeadingStyle}>Upload signed form</h4>
+                      <input
+                        type="file"
+                        onChange={(event) =>
+                          setPoeUploadFiles((current) => ({
+                            ...current,
+                            [documentType]: event.target.files?.[0],
+                          }))
+                        }
+                        style={submissionInputStyle}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleUploadPoeSubmission(documentType)}
+                        disabled={uploadingPoeDocument === documentType}
+                        style={{ ...buttonStyle, marginTop: "10px" }}
+                      >
+                        {uploadingPoeDocument === documentType ? "Uploading..." : "Upload"}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            {poeMessage && <p style={successTextStyle}>{poeMessage}</p>}
             <div style={listStyle}>
               {projects.map((project) => (
                 <article key={project.id} style={cardStyle}>

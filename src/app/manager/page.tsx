@@ -24,6 +24,36 @@ type Profile = {
   role: string;
   avatar_url?: string | null;
 };
+type PoeDocumentType = "poe_brief" | "initial_evaluation" | "final_evaluation";
+type PoeTemplate = {
+  document_type: PoeDocumentType;
+  file_url: string | null;
+  file_name: string | null;
+};
+type PoeSubmission = {
+  id: string;
+  employee_id: string;
+  document_type: PoeDocumentType;
+  file_url: string | null;
+  file_name: string | null;
+  submitted_at: string | null;
+  signed_file_url: string | null;
+  signed_file_name: string | null;
+  signed_at: string | null;
+  status: string;
+};
+
+const POE_DOCUMENT_TYPES: PoeDocumentType[] = [
+  "poe_brief",
+  "initial_evaluation",
+  "final_evaluation",
+];
+
+const POE_DOCUMENT_LABELS: Record<PoeDocumentType, string> = {
+  poe_brief: "POE Brief Form",
+  initial_evaluation: "Initial Employer Evaluation Form",
+  final_evaluation: "Final Employer Evaluation Form",
+};
 type LeaderboardEntry = {
   id: string;
   full_name: string;
@@ -97,6 +127,8 @@ type Announcement = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  file_url?: string | null;
+  file_name?: string | null;
 };
 
 type Conversation = {
@@ -209,6 +241,7 @@ export default function ManagerPage({
 
   const [announcementTitle, setAnnouncementTitle] = useState("");
   const [announcementContent, setAnnouncementContent] = useState("");
+  const [announcementFile, setAnnouncementFile] = useState<File | undefined>(undefined);
   const [isCreateAnnouncementExpanded, setIsCreateAnnouncementExpanded] = useState(false);
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
   const [editingAnnouncementTitle, setEditingAnnouncementTitle] = useState("");
@@ -242,6 +275,26 @@ export default function ManagerPage({
   const [showEmployeeProfileModal, setShowEmployeeProfileModal] = useState(false);
   const closeProfileTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [activeEvaluationEmployee, setActiveEvaluationEmployee] = useState<Profile | null>(null);
+  const [showEvaluationModal, setShowEvaluationModal] = useState(false);
+  const closeEvaluationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [poeTemplates, setPoeTemplates] = useState<
+    Record<PoeDocumentType, PoeTemplate | undefined>
+  >({} as Record<PoeDocumentType, PoeTemplate | undefined>);
+  const [evaluationSubmissions, setEvaluationSubmissions] = useState<
+    Record<PoeDocumentType, PoeSubmission | undefined>
+  >({} as Record<PoeDocumentType, PoeSubmission | undefined>);
+  const [evaluationMessage, setEvaluationMessage] = useState("");
+  const [loadingEvaluation, setLoadingEvaluation] = useState(false);
+  const [signingDocumentFiles, setSigningDocumentFiles] = useState<
+    Record<PoeDocumentType, File | undefined>
+  >({} as Record<PoeDocumentType, File | undefined>);
+  const [signingDocument, setSigningDocument] = useState<PoeDocumentType | null>(null);
+  const [templateUploadFiles, setTemplateUploadFiles] = useState<
+    Record<PoeDocumentType, File | undefined>
+  >({} as Record<PoeDocumentType, File | undefined>);
+  const [uploadingTemplate, setUploadingTemplate] = useState<PoeDocumentType | null>(null);
+
   useEffect(() => {
     loadManagerDashboard();
   }, []);
@@ -250,6 +303,9 @@ export default function ManagerPage({
     return () => {
       if (closeProfileTimeoutRef.current) {
         clearTimeout(closeProfileTimeoutRef.current);
+      }
+      if (closeEvaluationTimeoutRef.current) {
+        clearTimeout(closeEvaluationTimeoutRef.current);
       }
     };
   }, []);
@@ -284,6 +340,37 @@ export default function ManagerPage({
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [activeEmployeeProfile]);
+
+  useEffect(() => {
+    if (!activeEvaluationEmployee) {
+      setShowEvaluationModal(false);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      setShowEvaluationModal(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeEvaluationEmployee]);
+
+  useEffect(() => {
+    if (!activeEvaluationEmployee) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeEvaluation();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activeEvaluationEmployee]);
 
   useEffect(() => {
     if (!inspectedProject) return;
@@ -407,13 +494,20 @@ export default function ManagerPage({
           content,
           created_by,
           created_at,
-          updated_at
+          updated_at,
+          file_url,
+          file_name
         `,
       )
       .order("created_at", { ascending: false });
 
     if (announcementError) {
-      console.error("Error loading announcements:", announcementError);
+      console.error("Error loading announcements:", {
+        message: announcementError.message,
+        code: announcementError.code,
+        details: announcementError.details,
+        hint: announcementError.hint,
+      });
     } else {
       setAnnouncements((announcementData ?? []) as Announcement[]);
     }
@@ -1069,12 +1163,34 @@ export default function ManagerPage({
     setSavingAnnouncement(true);
     setAnnouncementMessage("");
 
+    let fileUrl: string | null = null;
+    let fileName: string | null = null;
+    if (announcementFile) {
+      const filePath = `${manager.id}/${Date.now()}-${announcementFile.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from("announcement-documents")
+        .upload(filePath, announcementFile, {
+          upsert: false,
+          contentType: announcementFile.type,
+        });
+      if (uploadError) {
+        console.error("Error uploading announcement document:", uploadError);
+        setAnnouncementMessage(uploadError.message);
+        setSavingAnnouncement(false);
+        return;
+      }
+      fileUrl = supabase.storage.from("announcement-documents").getPublicUrl(filePath).data.publicUrl;
+      fileName = announcementFile.name;
+    }
+
     const { data, error } = await supabase
       .from("announcements")
       .insert({
         title: announcementTitle.trim(),
         content: announcementContent.trim(),
         created_by: manager.id,
+        file_url: fileUrl,
+        file_name: fileName,
       })
       .select(
         `
@@ -1083,7 +1199,9 @@ export default function ManagerPage({
           content,
           created_by,
           created_at,
-          updated_at
+          updated_at,
+          file_url,
+          file_name
         `,
       )
       .single();
@@ -1109,6 +1227,7 @@ export default function ManagerPage({
 
     setAnnouncementTitle("");
     setAnnouncementContent("");
+    setAnnouncementFile(undefined);
     setIsCreateAnnouncementExpanded(false);
 
     setAnnouncementMessage("Announcement posted successfully.");
@@ -1938,6 +2057,154 @@ export default function ManagerPage({
     }, 180);
   }
 
+  async function openEvaluation(employee: Profile) {
+    if (closeEvaluationTimeoutRef.current) {
+      clearTimeout(closeEvaluationTimeoutRef.current);
+      closeEvaluationTimeoutRef.current = null;
+    }
+    setEvaluationMessage("");
+    setActiveEvaluationEmployee(employee);
+    setLoadingEvaluation(true);
+
+    const [{ data: templateData, error: templateError }, { data: submissionData, error: submissionError }] =
+      await Promise.all([
+        supabase.from("poe_document_templates").select("document_type, file_url, file_name"),
+        supabase
+          .from("poe_submissions")
+          .select(
+            "id, employee_id, document_type, file_url, file_name, submitted_at, signed_file_url, signed_file_name, signed_at, status",
+          )
+          .eq("employee_id", employee.id),
+      ]);
+
+    if (templateError) {
+      console.error("Error loading POE templates:", templateError);
+    } else if (templateData) {
+      const templateMap = {} as Record<PoeDocumentType, PoeTemplate | undefined>;
+      for (const template of templateData as PoeTemplate[]) {
+        templateMap[template.document_type] = template;
+      }
+      setPoeTemplates(templateMap);
+    }
+
+    if (submissionError) {
+      console.error("Error loading POE submissions:", submissionError);
+      setEvaluationMessage(submissionError.message);
+    } else if (submissionData) {
+      const submissionMap = {} as Record<PoeDocumentType, PoeSubmission | undefined>;
+      for (const submission of submissionData as PoeSubmission[]) {
+        submissionMap[submission.document_type] = submission;
+      }
+      setEvaluationSubmissions(submissionMap);
+    }
+
+    setLoadingEvaluation(false);
+  }
+
+  function closeEvaluation() {
+    setShowEvaluationModal(false);
+    if (closeEvaluationTimeoutRef.current) {
+      clearTimeout(closeEvaluationTimeoutRef.current);
+    }
+    closeEvaluationTimeoutRef.current = setTimeout(() => {
+      setActiveEvaluationEmployee(null);
+      setEvaluationSubmissions({} as Record<PoeDocumentType, PoeSubmission | undefined>);
+      closeEvaluationTimeoutRef.current = null;
+    }, 180);
+  }
+
+  async function handleSignPoeDocument(documentType: PoeDocumentType) {
+    if (!activeEvaluationEmployee) return;
+    const file = signingDocumentFiles[documentType];
+    if (!file) {
+      setEvaluationMessage("Please choose the countersigned file to upload.");
+      return;
+    }
+    setSigningDocument(documentType);
+    setEvaluationMessage("");
+
+    const filePath = `${activeEvaluationEmployee.id}/${documentType}/signed-${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage
+      .from("poe-submissions")
+      .upload(filePath, file, { upsert: false, contentType: file.type });
+    if (uploadError) {
+      setEvaluationMessage(uploadError.message);
+      setSigningDocument(null);
+      return;
+    }
+    const signedFileUrl = supabase.storage.from("poe-submissions").getPublicUrl(filePath).data.publicUrl;
+
+    const { data, error } = await supabase
+      .from("poe_submissions")
+      .upsert(
+        {
+          employee_id: activeEvaluationEmployee.id,
+          document_type: documentType,
+          signed_file_url: signedFileUrl,
+          signed_file_name: file.name,
+          signed_at: new Date().toISOString(),
+          status: "signed",
+        },
+        { onConflict: "employee_id,document_type" },
+      )
+      .select(
+        "id, employee_id, document_type, file_url, file_name, submitted_at, signed_file_url, signed_file_name, signed_at, status",
+      )
+      .single();
+
+    if (error || !data) {
+      setEvaluationMessage(error?.message || "Unable to upload the countersigned form.");
+      setSigningDocument(null);
+      return;
+    }
+
+    setEvaluationSubmissions((current) => ({ ...current, [documentType]: data as PoeSubmission }));
+    setSigningDocumentFiles((current) => ({ ...current, [documentType]: undefined }));
+    setEvaluationMessage("Countersigned form uploaded successfully.");
+    setSigningDocument(null);
+  }
+
+  async function handleUploadPoeTemplate(documentType: PoeDocumentType) {
+    const file = templateUploadFiles[documentType];
+    if (!file) {
+      setEvaluationMessage("Please choose a blank form file to upload.");
+      return;
+    }
+    setUploadingTemplate(documentType);
+    setEvaluationMessage("");
+
+    const filePath = `${documentType}/${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage
+      .from("poe-templates")
+      .upload(filePath, file, { upsert: false, contentType: file.type });
+    if (uploadError) {
+      setEvaluationMessage(uploadError.message);
+      setUploadingTemplate(null);
+      return;
+    }
+    const fileUrl = supabase.storage.from("poe-templates").getPublicUrl(filePath).data.publicUrl;
+
+    const { data, error } = await supabase
+      .from("poe_document_templates")
+      .upsert(
+        { document_type: documentType, file_url: fileUrl, file_name: file.name },
+        { onConflict: "document_type" },
+      )
+      .select("document_type, file_url, file_name")
+      .single();
+
+    if (error || !data) {
+      setEvaluationMessage(error?.message || "Unable to upload the blank form.");
+      setUploadingTemplate(null);
+      return;
+    }
+
+    setPoeTemplates((current) => ({ ...current, [documentType]: data as PoeTemplate }));
+    setTemplateUploadFiles((current) => ({ ...current, [documentType]: undefined }));
+    setEvaluationMessage("Blank form uploaded successfully.");
+    setUploadingTemplate(null);
+  }
+
   function formatDate(date: string) {
     return new Date(date).toLocaleString();
   }
@@ -1966,6 +2233,9 @@ export default function ManagerPage({
     );
   }
 
+  const unreadManagerNotificationCount = notifications.filter(
+    (notification) => notification.is_read === false,
+  ).length;
   const managerInitials = (manager.full_name || manager.email || "M")
     .trim()
     .split(/\s+/)
@@ -2032,6 +2302,28 @@ export default function ManagerPage({
         <h1 style={{ margin: 0 }}>Work-Integrated Learning</h1>
 
         <div className="topbar-user">
+          <Link href="/manager/notifications" className="notification-bell">
+            <svg
+              aria-label="Notifications"
+              role="img"
+              viewBox="0 0 24 24"
+              width="20"
+              height="20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            {unreadManagerNotificationCount > 0 && (
+              <span className="notification-badge">
+                {unreadManagerNotificationCount > 99 ? "99+" : unreadManagerNotificationCount}
+              </span>
+            )}
+          </Link>
           {manager.avatar_url ? (
             <img
               src={manager.avatar_url}
@@ -2424,7 +2716,7 @@ export default function ManagerPage({
                       </div>
                       <button
                         type="button"
-                        onClick={() => openEmployeeProfile(employee)}
+                        onClick={() => openEvaluation(employee)}
                         style={evaluateButtonStyle}
                         aria-label={`Evaluate ${employee.full_name || employee.email}`}
                       >
@@ -3460,6 +3752,15 @@ export default function ManagerPage({
                     }}
                   />
 
+                  <label style={{ fontSize: "13px", color: "#4f4a44", fontWeight: 600 }}>
+                    Attach a document (optional)
+                  </label>
+                  <input
+                    type="file"
+                    onChange={(event) => setAnnouncementFile(event.target.files?.[0])}
+                    style={inputStyle}
+                  />
+
                   <button
                     type="submit"
                     disabled={savingAnnouncement}
@@ -3556,6 +3857,17 @@ export default function ManagerPage({
                         >
                           {announcement.content}
                         </p>
+
+                        {announcement.file_url && (
+                          <a
+                            href={announcement.file_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ ...linkButtonStyle, marginTop: "10px" }}
+                          >
+                            Download {announcement.file_name || "attachment"}
+                          </a>
+                        )}
                       </>
                     )}
 
@@ -4015,6 +4327,152 @@ export default function ManagerPage({
           </article>
         </div>
       )}
+
+      {activeEvaluationEmployee && (
+        <div
+          onClick={closeEvaluation}
+          style={{
+            ...employeeModalBackdropStyle,
+            opacity: showEvaluationModal ? 1 : 0,
+            pointerEvents: showEvaluationModal ? "auto" : "none",
+          }}
+        >
+          <article
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              ...employeeModalCardStyle,
+              opacity: showEvaluationModal ? 1 : 0,
+              transform: showEvaluationModal
+                ? "translateY(0) scale(1)"
+                : "translateY(16px) scale(0.96)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={closeEvaluation}
+              style={employeeModalCloseStyle}
+              aria-label="Close evaluation"
+            >
+              Close
+            </button>
+            <div style={employeeModalHeaderStyle}>
+              {activeEvaluationEmployee.avatar_url ? (
+                <img
+                  src={activeEvaluationEmployee.avatar_url}
+                  alt={activeEvaluationEmployee.full_name || "Employee profile"}
+                  style={employeeModalAvatarStyle}
+                />
+              ) : (
+                <span style={employeeModalAvatarFallbackStyle}>
+                  {getEmployeeInitials(activeEvaluationEmployee)}
+                </span>
+              )}
+              <div>
+                <p style={employeeModalEyebrowStyle}>POE Evaluation</p>
+                <h4 style={employeeModalNameStyle}>
+                  {activeEvaluationEmployee.full_name || "Unnamed employee"}
+                </h4>
+                <p style={employeeModalEmailStyle}>{activeEvaluationEmployee.email}</p>
+              </div>
+            </div>
+
+            {loadingEvaluation ? (
+              <p style={subtitleStyle}>Loading documents...</p>
+            ) : (
+              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                {POE_DOCUMENT_TYPES.filter((documentType) => documentType !== "poe_brief").map((documentType) => {
+                  const template = poeTemplates[documentType];
+                  const submission = evaluationSubmissions[documentType];
+                  return (
+                    <div key={documentType} style={poeEvaluationCardStyle}>
+                      <h4 style={{ margin: "0 0 8px" }}>{POE_DOCUMENT_LABELS[documentType]}</h4>
+
+                      {template?.file_url ? (
+                        <a href={template.file_url} target="_blank" rel="noreferrer" style={linkButtonStyle}>
+                          Download blank form
+                        </a>
+                      ) : (
+                        <p style={teamMemberEmptyStyle}>Blank form not uploaded yet.</p>
+                      )}
+
+                      <div style={{ marginTop: "8px" }}>
+                        <label style={{ fontSize: "12px", color: "#8a8175" }}>
+                          {template?.file_url ? "Replace blank form" : "Upload blank form"}
+                        </label>
+                        <input
+                          type="file"
+                          onChange={(event) =>
+                            setTemplateUploadFiles((current) => ({
+                              ...current,
+                              [documentType]: event.target.files?.[0],
+                            }))
+                          }
+                          style={{ ...inputStyle, marginTop: "6px" }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleUploadPoeTemplate(documentType)}
+                          disabled={uploadingTemplate === documentType}
+                          style={{ ...secondaryButtonStyle, marginTop: "8px" }}
+                        >
+                          {uploadingTemplate === documentType ? "Uploading..." : "Upload blank form"}
+                        </button>
+                      </div>
+
+                      {submission?.file_url ? (
+                        <p style={teamMemberLabelStyle}>
+                          Employee&apos;s signed upload: {submission.file_name} —{" "}
+                          <a href={submission.file_url} target="_blank" rel="noreferrer">
+                            Download
+                          </a>
+                        </p>
+                      ) : (
+                        <p style={teamMemberEmptyStyle}>The employee has not uploaded this form yet.</p>
+                      )}
+
+                      {submission?.signed_file_url && (
+                        <p style={teamMemberLabelStyle}>
+                          Countersigned: {submission.signed_file_name} —{" "}
+                          <a href={submission.signed_file_url} target="_blank" rel="noreferrer">
+                            Download
+                          </a>
+                        </p>
+                      )}
+
+                      {submission?.file_url && (
+                        <div style={{ marginTop: "10px" }}>
+                          <label style={{ fontSize: "13px", color: "#4f4a44", fontWeight: 600 }}>
+                            Upload countersigned form
+                          </label>
+                          <input
+                            type="file"
+                            onChange={(event) =>
+                              setSigningDocumentFiles((current) => ({
+                                ...current,
+                                [documentType]: event.target.files?.[0],
+                              }))
+                            }
+                            style={{ ...inputStyle, marginTop: "6px" }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleSignPoeDocument(documentType)}
+                            disabled={signingDocument === documentType}
+                            style={{ ...buttonStyle, marginTop: "10px" }}
+                          >
+                            {signingDocument === documentType ? "Uploading..." : "Upload signed form"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {evaluationMessage && <p style={messageStyle}>{evaluationMessage}</p>}
+              </div>
+            )}
+          </article>
+        </div>
+      )}
     </main>
   );
 }
@@ -4192,6 +4650,21 @@ const inputStyle = {
   borderRadius: "10px",
   background: "#ffffff",
   fontSize: "14px",
+};
+
+const linkButtonStyle = {
+  display: "inline-block",
+  color: "#4f5f70",
+  fontSize: "13px",
+  fontWeight: 600,
+  textDecoration: "none",
+};
+
+const poeEvaluationCardStyle = {
+  padding: "16px 18px",
+  border: "1px solid #e5dfd6",
+  borderRadius: "12px",
+  background: "#f8f5ef",
 };
 
 const buttonStyle = {
