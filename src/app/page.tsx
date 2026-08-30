@@ -241,7 +241,7 @@ export default function HomePage() {
             <br />
             Partner with us for direct access to a pipeline of job-ready,
             vetted young professionals to reduce youth unemployment and build
-            South Africa's digital future.
+            South Africa&apos;s digital future.
             <br />
             1000+ students hired since inception.
             <br />

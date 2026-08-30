@@ -510,10 +510,7 @@ export default function EmployeeDashboard({
     } else {
       const visibleEvents = ((calendarData ?? []) as CalendarEvent[]).filter(
         (event) => {
-          const eventTeamId = (event as any).team_id as
-            | string
-            | null
-            | undefined;
+          const eventTeamId = (event as { team_id?: string | null }).team_id;
           return !eventTeamId || teamIds.includes(eventTeamId);
         },
       );
@@ -1285,7 +1282,7 @@ export default function EmployeeDashboard({
             </div>
             {projects.length === 0 ? (
               <EmptyMessage>
-                You don't have any assigned projects yet.
+                You don&apos;t have any assigned projects yet.
               </EmptyMessage>
             ) : filteredProjects.length === 0 ? (
               <EmptyMessage>No projects match the selected filters.</EmptyMessage>
@@ -2133,14 +2130,6 @@ const headerUser = {
   alignItems: "center",
   gap: "12px",
   flexWrap: "wrap" as const,
-};
-const headerSignOutStyle = {
-  padding: "9px 14px",
-  border: "1px solid #d8d0c5",
-  borderRadius: "9px",
-  background: "#ffffff",
-  color: "#222222",
-  cursor: "pointer",
 };
 const layoutStyle = { display: "flex", minHeight: "calc(100vh - 72px)" };
 const sidebarStyle = {

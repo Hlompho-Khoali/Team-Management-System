@@ -4757,18 +4757,6 @@ const deleteButtonStyle = {
   cursor: "pointer",
 };
 
-const subtleDeleteButtonStyle = {
-  marginTop: "12px",
-  padding: "5px 10px",
-  border: "1px solid #ddd4c8",
-  borderRadius: "999px",
-  background: "#ffffff",
-  color: "#8a8175",
-  fontSize: "12px",
-  fontWeight: 600,
-  cursor: "pointer",
-};
-
 const announcementDeleteButtonStyle = {
   padding: "6px 11px",
   border: "1px solid #d7bcbc",
@@ -4912,18 +4900,6 @@ const teamMemberListStyle = {
   paddingLeft: "18px",
   color: "#4f4a44",
   lineHeight: 1.7,
-};
-
-const profileIconStyle = {
-  marginLeft: "auto",
-  width: "24px",
-  height: "24px",
-  borderRadius: "50%",
-  border: "1px solid #d8d0c5",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  color: "#716b63",
 };
 
 const employeeModalBackdropStyle = {
