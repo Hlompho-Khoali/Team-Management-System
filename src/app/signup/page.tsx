@@ -104,6 +104,7 @@ export default function SignupPage() {
       }}
     >
       <div
+        className="auth-card"
         style={{
           width: "100%",
           maxWidth: "500px",

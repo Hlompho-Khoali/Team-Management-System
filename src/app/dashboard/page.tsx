@@ -1112,7 +1112,7 @@ export default function EmployeeDashboard({
 
   return (
     <main style={pageStyle}>
-      <header style={headerStyle}>
+      <header className="app-header" style={headerStyle}>
         <div>
           <h1 style={{ margin: 0 }}>Work-Integrated Learning</h1>
           <p style={headerSubtitle}>Employee Workspace</p>
@@ -1151,10 +1151,10 @@ export default function EmployeeDashboard({
           )}
         </div>
       </header>
-      <div style={layoutStyle}>
-        <aside style={sidebarStyle}>
+      <div className="app-shell-body" style={layoutStyle}>
+        <aside className="app-sidebar" style={sidebarStyle}>
           <p style={sidebarLabel}>Workspace</p>
-          <nav style={navStyle}>
+          <nav className="app-nav" style={navStyle}>
             <Link href="/dashboard" style={navLinkStyle}>
               Overview
             </Link>
@@ -1199,7 +1199,7 @@ export default function EmployeeDashboard({
             Sign Out
           </button>
         </aside>
-        <section style={contentStyle}>
+        <section className="app-content" style={contentStyle}>
           {activeSection !== "leaderboard" &&
             activeSection !== "poe" &&
             activeSection !== "profile" &&

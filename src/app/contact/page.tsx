@@ -59,7 +59,7 @@ export default function ContactPage() {
 
   return (
     <main style={pageStyle}>
-      <section style={cardStyle}>
+      <section className="auth-card" style={cardStyle}>
         <Link href="/" style={brandStyle}>Work-Integrated Learning</Link>
         <p style={eyebrowStyle}>Contact Us</p>
         <h1 style={headingStyle}>Find the right student talent for your next opportunity.</h1>

@@ -2288,6 +2288,7 @@ export default function ManagerPage({
       }}
     >
       <header
+        className="app-header"
         style={{
           height: "72px",
           background: "#ffffff",
@@ -2337,12 +2338,14 @@ export default function ManagerPage({
       </header>
 
       <div
+        className="app-shell-body"
         style={{
           display: "flex",
           minHeight: "calc(100vh - 72px)",
         }}
       >
         <aside
+          className="app-sidebar"
           style={{
             width: "230px",
             background: "#222222",
@@ -2364,6 +2367,7 @@ export default function ManagerPage({
           </p>
 
           <nav
+            className="app-nav"
             style={{
               display: "flex",
               flexDirection: "column",
@@ -2416,6 +2420,7 @@ export default function ManagerPage({
         </aside>
 
         <section
+          className="app-content"
           style={{
             flex: 1,
             padding: "48px",
