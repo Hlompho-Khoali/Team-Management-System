@@ -2,7 +2,27 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import {
+  Bell,
+  CalendarDays,
+  FolderKanban,
+  LayoutDashboard,
+  Megaphone,
+  MessageCircle,
+  Settings2,
+  Trophy,
+  UserRound,
+  UsersRound,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { ThemePicker } from "@/components/theme-picker";
+import {
+  APP_THEMES,
+  applyAppTheme,
+  DEFAULT_APP_THEME,
+  isAppTheme,
+  type AppTheme,
+} from "@/lib/themes";
 
 export type ManagerSection =
   | "overview"
@@ -183,6 +203,8 @@ export default function ManagerPage({
     useState("");
   const [settingsMessage, setSettingsMessage] = useState("");
   const [settingsError, setSettingsError] = useState("");
+  const [theme, setTheme] = useState<AppTheme>(DEFAULT_APP_THEME);
+  const [savingTheme, setSavingTheme] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [removingAvatar, setRemovingAvatar] = useState(false);
@@ -416,6 +438,11 @@ export default function ManagerPage({
       return;
     }
 
+    const profileTheme = isAppTheme(user.user_metadata?.theme)
+      ? user.user_metadata.theme
+      : DEFAULT_APP_THEME;
+    setTheme(profileTheme);
+    applyAppTheme(profileTheme);
     setManager(profileData);
     setSettingsFullName(profileData.full_name || "");
     setSettingsEmail(profileData.email || user.email || "");
@@ -1912,6 +1939,24 @@ export default function ManagerPage({
     setSavingProfile(false);
   }
 
+  async function handleThemeChange(nextTheme: AppTheme) {
+    if (!manager || savingTheme) return;
+    setSavingTheme(true);
+    setSettingsMessage("");
+    setSettingsError("");
+    const { error } = await supabase.auth.updateUser({
+      data: { theme: nextTheme },
+    });
+    if (error) {
+      setSettingsError(error.message);
+    } else {
+      setTheme(nextTheme);
+      applyAppTheme(nextTheme);
+      setSettingsMessage(`${APP_THEMES[nextTheme].label} theme saved.`);
+    }
+    setSavingTheme(false);
+  }
+
   async function handleAvatarUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file || !manager) return;
@@ -2283,8 +2328,8 @@ export default function ManagerPage({
     <main
       style={{
         minHeight: "100vh",
-        background: "#f5f1ea",
-        color: "#222222",
+        background: "var(--theme-page-gradient)",
+        color: "var(--theme-text)",
       }}
     >
       <header
@@ -2300,7 +2345,10 @@ export default function ManagerPage({
           boxSizing: "border-box",
         }}
       >
-        <h1 style={{ margin: 0 }}>Work-Integrated Learning</h1>
+        <h1 style={{ margin: 0 }}>
+          <span className="brand-glyph"><img src="/team-logo.png" alt="" /></span>
+          Work-Integrated Learning
+        </h1>
 
         <div className="topbar-user">
           <Link href="/manager/notifications" className="notification-bell">
@@ -2347,8 +2395,8 @@ export default function ManagerPage({
         <aside
           className="app-sidebar"
           style={{
-            width: "230px",
-            background: "#222222",
+            width: "250px",
+            background: "var(--theme-sidebar)",
             color: "#ffffff",
             padding: "32px 20px",
             boxSizing: "border-box",
@@ -2374,43 +2422,43 @@ export default function ManagerPage({
               gap: "8px",
             }}
           >
-            <Link href="/manager" style={navStyle}>
-              Overview
+            <Link href="/manager" style={activeSection === "overview" ? activeNavStyle : navStyle} aria-current={activeSection === "overview" ? "page" : undefined}>
+              <span className="nav-icon"><LayoutDashboard size={16} aria-hidden="true" /></span>Overview
             </Link>
 
-            <Link href="/manager/teams" style={navStyle}>
-              Teams
+            <Link href="/manager/teams" style={activeSection === "teams" ? activeNavStyle : navStyle} aria-current={activeSection === "teams" ? "page" : undefined}>
+              <span className="nav-icon"><UsersRound size={16} aria-hidden="true" /></span>Teams
             </Link>
 
-            <Link href="/manager/employees" style={navStyle}>
-              Employees
+            <Link href="/manager/employees" style={activeSection === "employees" ? activeNavStyle : navStyle} aria-current={activeSection === "employees" ? "page" : undefined}>
+              <span className="nav-icon"><UserRound size={16} aria-hidden="true" /></span>Employees
             </Link>
 
-            <Link href="/manager/projects" style={navStyle}>
-              Projects
+            <Link href="/manager/projects" style={activeSection === "projects" ? activeNavStyle : navStyle} aria-current={activeSection === "projects" ? "page" : undefined}>
+              <span className="nav-icon"><FolderKanban size={16} aria-hidden="true" /></span>Projects
             </Link>
-            <Link href="/manager/leaderboard" style={navStyle}>
-              Leaderboard
-            </Link>
-
-            <Link href="/manager/announcements" style={navStyle}>
-              Announcements
+            <Link href="/manager/leaderboard" style={activeSection === "leaderboard" ? activeNavStyle : navStyle} aria-current={activeSection === "leaderboard" ? "page" : undefined}>
+              <span className="nav-icon"><Trophy size={16} aria-hidden="true" /></span>Leaderboard
             </Link>
 
-            <Link href="/manager/messages" style={navStyle}>
-              Messages
+            <Link href="/manager/announcements" style={activeSection === "announcements" ? activeNavStyle : navStyle} aria-current={activeSection === "announcements" ? "page" : undefined}>
+              <span className="nav-icon"><Megaphone size={16} aria-hidden="true" /></span>Announcements
             </Link>
 
-            <Link href="/manager/calendar" style={navStyle}>
-              Calendar
+            <Link href="/manager/messages" style={activeSection === "messages" ? activeNavStyle : navStyle} aria-current={activeSection === "messages" ? "page" : undefined}>
+              <span className="nav-icon"><MessageCircle size={16} aria-hidden="true" /></span>Messages
             </Link>
 
-            <Link href="/manager/notifications" style={navStyle}>
-              Notifications
+            <Link href="/manager/calendar" style={activeSection === "calendar" ? activeNavStyle : navStyle} aria-current={activeSection === "calendar" ? "page" : undefined}>
+              <span className="nav-icon"><CalendarDays size={16} aria-hidden="true" /></span>Calendar
             </Link>
 
-            <Link href="/manager/settings" style={navStyle}>
-              Settings
+            <Link href="/manager/notifications" style={activeSection === "notifications" ? activeNavStyle : navStyle} aria-current={activeSection === "notifications" ? "page" : undefined}>
+              <span className="nav-icon"><Bell size={16} aria-hidden="true" /></span>Notifications
+            </Link>
+
+            <Link href="/manager/settings" style={activeSection === "settings" ? activeNavStyle : navStyle} aria-current={activeSection === "settings" ? "page" : undefined}>
+              <span className="nav-icon"><Settings2 size={16} aria-hidden="true" /></span>Settings
             </Link>
           </nav>
 
@@ -3958,6 +4006,13 @@ export default function ManagerPage({
             {settingsMessage && <p style={successMessageStyle}>{settingsMessage}</p>}
             {settingsError && <p style={errorMessageStyle}>{settingsError}</p>}
 
+            <article className="theme-settings-panel">
+              <h4 style={{ marginTop: 0 }}>Color theme</h4>
+              <p style={settingsHintStyle}>Choose a color palette for your workspace.</p>
+              <ThemePicker value={theme} onChange={handleThemeChange} disabled={savingTheme} />
+              {savingTheme && <p className="theme-save-status">Saving theme...</p>}
+            </article>
+
             <div style={settingsGridStyle}>
               <article style={projectCardStyle}>
                 <h4 style={{ marginTop: 0 }}>Profile picture</h4>
@@ -4605,7 +4660,7 @@ const sectionStyle = {
   background: "#ffffff",
   borderRadius: "18px",
   padding: "28px",
-  border: "1px solid #e5dfd6",
+  border: "1px solid var(--theme-border)",
   marginBottom: "24px",
 };
 
@@ -4676,7 +4731,7 @@ const buttonStyle = {
   padding: "12px 18px",
   border: "none",
   borderRadius: "10px",
-  background: "#222222",
+  background: "var(--theme-sidebar)",
   color: "#ffffff",
   cursor: "pointer",
 };
@@ -5022,7 +5077,7 @@ const employeeModalTagStyle = {
 
 const projectCardStyle = {
   padding: "22px",
-  border: "1px solid #e5dfd6",
+  border: "1px solid var(--theme-border)",
   borderRadius: "14px",
   background: "#ffffff",
 };
@@ -5218,6 +5273,12 @@ const navStyle = {
   borderRadius: "10px",
   color: "#ffffff",
   textDecoration: "none",
+};
+const activeNavStyle = {
+  ...navStyle,
+  background: "var(--theme-accent)",
+  color: "var(--theme-accent-text)",
+  fontWeight: 700,
 };
 
 const projectLinkStyle = {
