@@ -225,7 +225,7 @@ export default function HomePage() {
             >
               Hire A
               <br />
-              Student.
+              Graduate.
             </h2>
           </div>
 
